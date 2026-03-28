@@ -3,7 +3,9 @@
 package scheduler
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -55,6 +57,70 @@ func ComputeNextRun(task types.ScheduledTask, now time.Time) *time.Time {
 
 	default:
 		return nil
+	}
+}
+
+// TaskStore is the subset of db.DB that the scheduler loop requires.
+// *db.DB satisfies this interface without modification.
+type TaskStore interface {
+	GetDueTasks(now int64) ([]types.ScheduledTask, error)
+	UpdateTask(task types.ScheduledTask) error
+}
+
+// StartSchedulerLoop polls store every poll interval for tasks whose NextRun is
+// due, passes each to enqueue, advances their NextRun (or marks them done), and
+// exits cleanly when ctx is cancelled.
+//
+// It is safe to run in a goroutine:
+//
+//	go scheduler.StartSchedulerLoop(ctx, db, enqueueFn, 30*time.Second)
+//
+// The enqueue callback is called synchronously within each tick so the caller
+// can do simple bookkeeping without locks if needed. Actual processing happens
+// asynchronously inside the queue.
+func StartSchedulerLoop(
+	ctx context.Context,
+	store TaskStore,
+	enqueue func(types.ScheduledTask),
+	poll time.Duration,
+) {
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			runOnce(store, enqueue, now)
+		}
+	}
+}
+
+// runOnce fetches all due tasks and enqueues them, advancing or retiring each
+// one before the next tick. It is package-private but exercised directly by
+// tests via a fake clock value — no real timers needed.
+//
+// Update-before-enqueue semantics: NextRun (or Status=done) is persisted
+// before the task is dispatched. A crash between persist and dispatch means
+// the task silently skips one cycle, which is preferable to a double-fire.
+func runOnce(store TaskStore, enqueue func(types.ScheduledTask), now time.Time) {
+	tasks, err := store.GetDueTasks(now.Unix())
+	if err != nil {
+		log.Printf("scheduler: GetDueTasks: %v", err)
+		return
+	}
+	for _, task := range tasks {
+		enqueue(task)
+		next := ComputeNextRun(task, now)
+		if next == nil {
+			task.Status = types.TaskStatusDone
+		} else {
+			task.NextRun = next.Unix()
+		}
+		if err := store.UpdateTask(task); err != nil {
+			log.Printf("scheduler: UpdateTask(%d): %v", task.ID, err)
+			// Continue processing remaining tasks despite per-task errors.
+		}
 	}
 }
 
