@@ -236,7 +236,7 @@ func main() {
 	}
 
 	// Placeholder channel — replace by merging a skill branch, e.g. `git merge skill/matrix`.
-	// Skill branches self-register via init() and are picked up by channels.All() below.
+	// Skill branches self-register via init() and are picked up by channels.All() once applied.
 	var ch types.Channel = noopChannel{}
 	if err := ch.Connect(); err != nil {
 		log.Fatalf("gopherclaw: channel.Connect: %v", err)
