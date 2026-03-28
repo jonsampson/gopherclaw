@@ -10,7 +10,7 @@ linters:
     - godot          # doc comments must end with a period
     - noctx          # HTTP requests made without a context
     - bodyclose      # http response bodies must be closed
-    - exportloopref  # loop-variable capture bugs (pre-1.22 code)
+    - copyloopvar    # loop-variable capture bugs
 
 linters-settings:
   godot:

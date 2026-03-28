@@ -35,7 +35,6 @@ type groupState struct {
 	isTask           bool // true if the currently-running item is a task
 	idleReady        bool // true after first NotifyIdle with no intervening message
 	msgSentAfterIdle bool // true if SendMessage was called since last NotifyIdle
-	retries          int
 	queue            []pendingItem
 	taskQueue        []pendingItem
 	runningTaskIDs   map[string]bool

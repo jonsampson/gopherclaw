@@ -43,7 +43,7 @@ type ScheduledTask struct {
 	GroupFolder   string
 	Prompt        string
 	ScheduleType  ScheduleType
-	ScheduleValue string    // interval in seconds, or cron expression
+	ScheduleValue string // interval in seconds, or cron expression
 	Status        TaskStatus
 	NextRun       int64 // Unix timestamp (seconds)
 }
