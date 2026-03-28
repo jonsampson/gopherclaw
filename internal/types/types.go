@@ -57,18 +57,27 @@ type TaskRunLog struct {
 	Output string
 }
 
-// Channel is the interface that messaging platform adapters must implement.
+// Sender is the minimal interface for delivering a message to a chat.
+// Use this where only outbound delivery is needed (e.g. processGroup).
+type Sender interface {
+	SendMessage(chatJID, text string) error
+}
+
+// Channel is a full messaging platform adapter: manages the connection
+// lifecycle and can send messages. Inbound messages arrive via the
+// OnInboundMessage callback, not through this interface.
 type Channel interface {
+	Sender
 	Connect() error
 	Disconnect() error
-	SendMessage(chatJID, text string) error
 }
 
 // OnInboundMessage is called when a new message arrives from a channel.
 type OnInboundMessage func(chatJID string, msg NewMessage)
 
 // OnChatMetadata is called when chat name/group metadata is discovered.
-type OnChatMetadata func(chatJID, name string, isGroup bool, channel Channel)
+// The sender argument may be used to deliver an acknowledgement.
+type OnChatMetadata func(chatJID, name string, isGroup bool, sender Sender)
 
 // ChatInfo holds metadata about a known chat.
 type ChatInfo struct {

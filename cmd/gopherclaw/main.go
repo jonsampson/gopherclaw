@@ -118,8 +118,8 @@ func (noopChannel) Disconnect() error             { return nil }
 func (noopChannel) SendMessage(_, _ string) error { return nil }
 
 // processGroup runs the agent script for the given queue item, updating the
-// persisted session ID on success and delivering the result to the channel.
-func processGroup(item queue.Item, database *db.DB, ch types.Channel, timeout time.Duration) error {
+// persisted session ID on success and delivering the result via sender.
+func processGroup(item queue.Item, database *db.DB, sender types.Sender, timeout time.Duration) error {
 	sessionID, _ := database.GetSession(item.GroupID)
 
 	out := runner.RunContainerAgent(
@@ -159,7 +159,7 @@ func processGroup(item queue.Item, database *db.DB, ch types.Channel, timeout ti
 	// Deliver the captured result to the chat (not for scheduled task runs,
 	// which typically deliver output via the task's own send_message tool).
 	if out.Result != nil && *out.Result != "" && !item.IsTask {
-		if err := ch.SendMessage(item.GroupID, *out.Result); err != nil {
+		if err := sender.SendMessage(item.GroupID, *out.Result); err != nil {
 			log.Printf("processGroup: SendMessage %s: %v", item.GroupID, err)
 		}
 	}
@@ -235,7 +235,8 @@ func main() {
 		q.SetCloseDir(cfg.CloseDir)
 	}
 
-	// Placeholder channel — replace with a real adapter (see above).
+	// Placeholder channel — replace by merging a skill branch, e.g. `git merge skill/matrix`.
+	// Skill branches self-register via init() and are picked up by channels.All() below.
 	var ch types.Channel = noopChannel{}
 	if err := ch.Connect(); err != nil {
 		log.Fatalf("gopherclaw: channel.Connect: %v", err)
