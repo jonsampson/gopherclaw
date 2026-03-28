@@ -1,3 +1,4 @@
+// Package allowlist_test exercises the sender allowlist loading and evaluation logic.
 package allowlist_test
 
 import (
@@ -22,8 +23,8 @@ func writeFile(t *testing.T, dir, name, content string) string {
 
 func TestLoadAllowlist_MissingFile_Defaults(t *testing.T) {
 	cfg := allowlist.LoadAllowlist("/nonexistent/path/allowlist.json")
-	if cfg.Allow != "*" {
-		t.Errorf("expected allow='*', got %v", cfg.Allow)
+	if !cfg.Allow.IsWildcard() {
+		t.Errorf("expected wildcard allow by default, got list: %v", cfg.Allow.List())
 	}
 	if cfg.Mode != types.AllowModeTrigger {
 		t.Errorf("expected mode=trigger, got %v", cfg.Mode)
@@ -37,8 +38,8 @@ func TestLoadAllowlist_ValidWildcard(t *testing.T) {
 	dir := t.TempDir()
 	path := writeFile(t, dir, "a.json", `{"allow":"*","mode":"drop","log_denied":false}`)
 	cfg := allowlist.LoadAllowlist(path)
-	if cfg.Allow != "*" {
-		t.Errorf("expected '*', got %v", cfg.Allow)
+	if !cfg.Allow.IsWildcard() {
+		t.Errorf("expected wildcard, got list: %v", cfg.Allow.List())
 	}
 	if cfg.Mode != types.AllowModeDrop {
 		t.Errorf("expected drop, got %v", cfg.Mode)
@@ -52,12 +53,11 @@ func TestLoadAllowlist_DenyAll(t *testing.T) {
 	dir := t.TempDir()
 	path := writeFile(t, dir, "a.json", `{"allow":[],"mode":"trigger","log_denied":true}`)
 	cfg := allowlist.LoadAllowlist(path)
-	senders, ok := cfg.Allow.([]string)
-	if !ok {
-		t.Fatalf("expected []string, got %T", cfg.Allow)
+	if cfg.Allow.IsWildcard() {
+		t.Fatal("expected explicit list, got wildcard")
 	}
-	if len(senders) != 0 {
-		t.Errorf("expected empty list, got %v", senders)
+	if len(cfg.Allow.List()) != 0 {
+		t.Errorf("expected empty list, got %v", cfg.Allow.List())
 	}
 }
 
@@ -65,10 +65,10 @@ func TestLoadAllowlist_SenderArray(t *testing.T) {
 	dir := t.TempDir()
 	path := writeFile(t, dir, "a.json", `{"allow":["alice","bob"],"mode":"drop","log_denied":false}`)
 	cfg := allowlist.LoadAllowlist(path)
-	senders, ok := cfg.Allow.([]string)
-	if !ok {
-		t.Fatalf("expected []string, got %T", cfg.Allow)
+	if cfg.Allow.IsWildcard() {
+		t.Fatal("expected list, got wildcard")
 	}
+	senders := cfg.Allow.List()
 	if len(senders) != 2 || senders[0] != "alice" || senders[1] != "bob" {
 		t.Errorf("unexpected senders: %v", senders)
 	}
@@ -85,9 +85,12 @@ func TestLoadAllowlist_PerChatOverride(t *testing.T) {
 	if !ok {
 		t.Fatal("per_chat override missing")
 	}
-	senders, ok := pc.Allow.([]string)
-	if !ok || len(senders) != 1 || senders[0] != "carol" {
-		t.Errorf("unexpected per_chat allow: %v", pc.Allow)
+	if pc.Allow.IsWildcard() {
+		t.Fatal("per_chat: expected list, got wildcard")
+	}
+	senders := pc.Allow.List()
+	if len(senders) != 1 || senders[0] != "carol" {
+		t.Errorf("unexpected per_chat senders: %v", senders)
 	}
 	if pc.Mode != types.AllowModeDrop {
 		t.Errorf("expected drop mode in per_chat, got %v", pc.Mode)
@@ -98,17 +101,18 @@ func TestLoadAllowlist_InvalidJSON_FallbackDefault(t *testing.T) {
 	dir := t.TempDir()
 	path := writeFile(t, dir, "a.json", `not json at all`)
 	cfg := allowlist.LoadAllowlist(path)
-	if cfg.Allow != "*" {
-		t.Errorf("expected '*' fallback, got %v", cfg.Allow)
+	if !cfg.Allow.IsWildcard() {
+		t.Errorf("expected wildcard fallback on invalid JSON, got list: %v", cfg.Allow.List())
 	}
 }
 
 func TestLoadAllowlist_InvalidSchema_FallbackDefault(t *testing.T) {
 	dir := t.TempDir()
+	// Valid JSON but missing required "allow" field → fallback.
 	path := writeFile(t, dir, "a.json", `{"foo":"bar"}`)
 	cfg := allowlist.LoadAllowlist(path)
-	if cfg.Allow != "*" {
-		t.Errorf("expected '*' fallback on invalid schema, got %v", cfg.Allow)
+	if !cfg.Allow.IsWildcard() {
+		t.Errorf("expected wildcard fallback on invalid schema, got list: %v", cfg.Allow.List())
 	}
 }
 
@@ -116,29 +120,51 @@ func TestLoadAllowlist_NonStringArrayItems_FallbackDefault(t *testing.T) {
 	dir := t.TempDir()
 	path := writeFile(t, dir, "a.json", `{"allow":[1,null,true],"mode":"trigger"}`)
 	cfg := allowlist.LoadAllowlist(path)
-	if cfg.Allow != "*" {
-		t.Errorf("expected '*' fallback on non-string items, got %v", cfg.Allow)
+	if !cfg.Allow.IsWildcard() {
+		t.Errorf("expected wildcard fallback on non-string items, got list: %v", cfg.Allow.List())
+	}
+}
+
+func TestLoadAllowlist_InvalidPerChatEntry_SkippedNotRejected(t *testing.T) {
+	dir := t.TempDir()
+	// One valid and one invalid per-chat entry: the whole file should still load.
+	path := writeFile(t, dir, "a.json", `{
+		"allow":"*","mode":"trigger","log_denied":false,
+		"per_chat":{
+			"good@g.us":{"allow":["alice"],"mode":"trigger"},
+			"bad@g.us":{"allow":42}
+		}
+	}`)
+	cfg := allowlist.LoadAllowlist(path)
+	if !cfg.Allow.IsWildcard() {
+		t.Error("global rule should still be wildcard")
+	}
+	if _, ok := cfg.PerChat["good@g.us"]; !ok {
+		t.Error("valid per-chat entry should be present")
+	}
+	if _, ok := cfg.PerChat["bad@g.us"]; ok {
+		t.Error("invalid per-chat entry should be skipped")
 	}
 }
 
 // ---- IsSenderAllowed ----
 
 func TestIsSenderAllowed_Wildcard(t *testing.T) {
-	cfg := &types.AllowlistConfig{Allow: "*", Mode: types.AllowModeTrigger}
+	cfg := &types.AllowlistConfig{Allow: types.AllowEveryone(), Mode: types.AllowModeTrigger}
 	if !allowlist.IsSenderAllowed(cfg, "chat@g.us", "anyone") {
-		t.Error("wildcard should allow anyone")
+		t.Error("wildcard should allow any sender")
 	}
 }
 
 func TestIsSenderAllowed_EmptyListBlocksAll(t *testing.T) {
-	cfg := &types.AllowlistConfig{Allow: []string{}, Mode: types.AllowModeTrigger}
+	cfg := &types.AllowlistConfig{Allow: types.AllowOnly(nil), Mode: types.AllowModeTrigger}
 	if allowlist.IsSenderAllowed(cfg, "chat@g.us", "alice") {
-		t.Error("empty list should block all senders")
+		t.Error("empty allowlist should block all senders")
 	}
 }
 
 func TestIsSenderAllowed_ExactMatch(t *testing.T) {
-	cfg := &types.AllowlistConfig{Allow: []string{"alice"}, Mode: types.AllowModeTrigger}
+	cfg := &types.AllowlistConfig{Allow: types.AllowOnly([]string{"alice"}), Mode: types.AllowModeTrigger}
 	if !allowlist.IsSenderAllowed(cfg, "chat@g.us", "alice") {
 		t.Error("alice should be allowed")
 	}
@@ -149,17 +175,20 @@ func TestIsSenderAllowed_ExactMatch(t *testing.T) {
 
 func TestIsSenderAllowed_PerChatOverride(t *testing.T) {
 	cfg := &types.AllowlistConfig{
-		Allow: "*",
+		Allow: types.AllowEveryone(),
 		Mode:  types.AllowModeTrigger,
 		PerChat: map[string]types.ChatAllowlistConfig{
-			"restricted@g.us": {Allow: []string{"carol"}, Mode: types.AllowModeTrigger},
+			"restricted@g.us": {
+				Allow: types.AllowOnly([]string{"carol"}),
+				Mode:  types.AllowModeTrigger,
+			},
 		},
 	}
-	// wildcard applies to other chats
+	// Global wildcard applies to non-overridden chats.
 	if !allowlist.IsSenderAllowed(cfg, "other@g.us", "anyone") {
 		t.Error("wildcard should apply to non-overridden chat")
 	}
-	// per-chat rule applies
+	// Per-chat rule restricts access.
 	if !allowlist.IsSenderAllowed(cfg, "restricted@g.us", "carol") {
 		t.Error("carol should be allowed in restricted chat")
 	}
@@ -170,40 +199,40 @@ func TestIsSenderAllowed_PerChatOverride(t *testing.T) {
 
 // ---- ShouldDropMessage ----
 
-func TestShouldDropMessage_TriggerMode(t *testing.T) {
-	cfg := &types.AllowlistConfig{Allow: []string{"alice"}, Mode: types.AllowModeTrigger}
+func TestShouldDropMessage_TriggerMode_NeverDrops(t *testing.T) {
+	cfg := &types.AllowlistConfig{Allow: types.AllowOnly([]string{"alice"}), Mode: types.AllowModeTrigger}
 	if allowlist.ShouldDropMessage(cfg, "chat@g.us", "bob") {
-		t.Error("trigger mode should not drop messages")
+		t.Error("trigger mode should never drop messages")
 	}
 }
 
-func TestShouldDropMessage_DropMode(t *testing.T) {
-	cfg := &types.AllowlistConfig{Allow: []string{"alice"}, Mode: types.AllowModeDrop}
+func TestShouldDropMessage_DropMode_DropsDisallowed(t *testing.T) {
+	cfg := &types.AllowlistConfig{Allow: types.AllowOnly([]string{"alice"}), Mode: types.AllowModeDrop}
 	if !allowlist.ShouldDropMessage(cfg, "chat@g.us", "bob") {
-		t.Error("drop mode should drop disallowed sender")
+		t.Error("drop mode should drop non-allowed sender")
 	}
 }
 
-func TestShouldDropMessage_AllowedSenderNotDropped(t *testing.T) {
-	cfg := &types.AllowlistConfig{Allow: []string{"alice"}, Mode: types.AllowModeDrop}
+func TestShouldDropMessage_DropMode_KeepsAllowed(t *testing.T) {
+	cfg := &types.AllowlistConfig{Allow: types.AllowOnly([]string{"alice"}), Mode: types.AllowModeDrop}
 	if allowlist.ShouldDropMessage(cfg, "chat@g.us", "alice") {
-		t.Error("allowed sender should not be dropped even in drop mode")
+		t.Error("drop mode should keep allowed sender")
 	}
 }
 
-func TestShouldDropMessage_PerChatMode(t *testing.T) {
+func TestShouldDropMessage_PerChatModeOverride(t *testing.T) {
 	cfg := &types.AllowlistConfig{
-		Allow: "*",
+		Allow: types.AllowEveryone(),
 		Mode:  types.AllowModeTrigger,
 		PerChat: map[string]types.ChatAllowlistConfig{
-			"strict@g.us": {Allow: []string{"alice"}, Mode: types.AllowModeDrop},
+			"strict@g.us": {Allow: types.AllowOnly([]string{"alice"}), Mode: types.AllowModeDrop},
 		},
 	}
-	// global: trigger — don't drop
+	// Global trigger mode: no drops.
 	if allowlist.ShouldDropMessage(cfg, "other@g.us", "anyone") {
 		t.Error("global trigger mode should not drop")
 	}
-	// per-chat: drop mode
+	// Per-chat drop mode: non-allowed sender dropped.
 	if !allowlist.ShouldDropMessage(cfg, "strict@g.us", "bob") {
 		t.Error("per-chat drop mode should drop non-allowed sender")
 	}
@@ -212,21 +241,25 @@ func TestShouldDropMessage_PerChatMode(t *testing.T) {
 // ---- IsTriggerAllowed ----
 
 func TestIsTriggerAllowed_AllowedSender(t *testing.T) {
-	cfg := &types.AllowlistConfig{Allow: []string{"alice"}, Mode: types.AllowModeTrigger}
-	if !allowlist.IsTriggerAllowed(cfg, "chat@g.us", "alice", false) {
+	cfg := &types.AllowlistConfig{Allow: types.AllowOnly([]string{"alice"}), Mode: types.AllowModeTrigger}
+	if !allowlist.IsTriggerAllowed(cfg, "chat@g.us", "alice") {
 		t.Error("alice should pass trigger check")
 	}
 }
 
 func TestIsTriggerAllowed_DisallowedSender(t *testing.T) {
-	cfg := &types.AllowlistConfig{Allow: []string{"alice"}, Mode: types.AllowModeTrigger}
-	if allowlist.IsTriggerAllowed(cfg, "chat@g.us", "bob", false) {
+	cfg := &types.AllowlistConfig{Allow: types.AllowOnly([]string{"alice"}), Mode: types.AllowModeTrigger}
+	if allowlist.IsTriggerAllowed(cfg, "chat@g.us", "bob") {
 		t.Error("bob should fail trigger check")
 	}
 }
 
-func TestIsTriggerAllowed_LoggingDoesNotPanic(t *testing.T) {
-	cfg := &types.AllowlistConfig{Allow: []string{"alice"}, Mode: types.AllowModeTrigger, LogDenied: true}
-	// should not panic
-	allowlist.IsTriggerAllowed(cfg, "chat@g.us", "eve", true)
+func TestIsTriggerAllowed_LogDenied_DoesNotPanic(t *testing.T) {
+	cfg := &types.AllowlistConfig{
+		Allow:     types.AllowOnly([]string{"alice"}),
+		Mode:      types.AllowModeTrigger,
+		LogDenied: true,
+	}
+	// Should not panic even when logging is enabled for a denied sender.
+	allowlist.IsTriggerAllowed(cfg, "chat@g.us", "eve")
 }

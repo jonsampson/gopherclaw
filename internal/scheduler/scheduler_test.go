@@ -1,3 +1,4 @@
+// Package scheduler_test exercises ComputeNextRun and ValidateGroupFolder.
 package scheduler_test
 
 import (
@@ -16,55 +17,74 @@ func TestComputeNextRun_OnceTasks_ReturnNil(t *testing.T) {
 		ScheduleValue: "",
 		NextRun:       1000,
 	}
-	next := scheduler.ComputeNextRun(task, time.Unix(2000, 0))
-	if next != nil {
-		t.Errorf("expected nil for once task, got %v", next)
+	if got := scheduler.ComputeNextRun(task, time.Unix(2000, 0)); got != nil {
+		t.Errorf("once task: expected nil, got %v", *got)
 	}
 }
 
 func TestComputeNextRun_IntervalDriftPrevention(t *testing.T) {
-	// scheduled every 3600 seconds; last next_run was at t=10000
-	intervalSec := int64(3600)
+	// Task is scheduled every 3600 s; previous NextRun was at t=10000.
 	task := types.ScheduledTask{
 		ScheduleType:  types.ScheduleInterval,
 		ScheduleValue: "3600",
 		NextRun:       10000,
 	}
-	// "now" is slightly after 10000 (task just ran)
+	// "now" is just past the scheduled time — the next run must be
+	// previousNextRun + 1×interval, NOT now + interval.
 	now := time.Unix(10005, 0)
 	next := scheduler.ComputeNextRun(task, now)
 	if next == nil {
 		t.Fatal("expected non-nil next run for interval task")
 	}
-	expected := task.NextRun + intervalSec
+	expected := task.NextRun + 3600
 	if next.Unix() != expected {
 		t.Errorf("drift prevention: expected %d, got %d", expected, next.Unix())
 	}
 }
 
 func TestComputeNextRun_MissedIntervalsSkipWithoutLooping(t *testing.T) {
-	intervalSec := int64(60)
+	const intervalSec = int64(60)
 	task := types.ScheduledTask{
 		ScheduleType:  types.ScheduleInterval,
 		ScheduleValue: "60",
 		NextRun:       1000,
 	}
-	// Way in the future — missed many intervals
+	// Way in the future — many intervals were missed.
 	now := time.Unix(5000, 0)
 	next := scheduler.ComputeNextRun(task, now)
 	if next == nil {
-		t.Fatal("expected non-nil next for interval task")
+		t.Fatal("expected non-nil next run")
 	}
-	// Must be in the future
 	if !next.After(now) {
-		t.Errorf("next run %v is not after now %v", *next, now)
+		t.Errorf("next run %v should be after now %v", *next, now)
 	}
-	// Must align to the schedule grid: (next - base) % interval == 0
-	base := task.NextRun
-	offset := (next.Unix() - base) % intervalSec
+	// Must align to the original schedule grid: (next - base) % interval == 0.
+	offset := (next.Unix() - task.NextRun) % intervalSec
 	if offset != 0 {
-		t.Errorf("next run %d is not on the schedule grid (base=%d, interval=%d, offset=%d)",
-			next.Unix(), base, intervalSec, offset)
+		t.Errorf("next run not on schedule grid (base=%d, interval=%d, next=%d, offset=%d)",
+			task.NextRun, intervalSec, next.Unix(), offset)
+	}
+}
+
+func TestComputeNextRun_IntervalZero_ReturnsNil(t *testing.T) {
+	task := types.ScheduledTask{
+		ScheduleType:  types.ScheduleInterval,
+		ScheduleValue: "0",
+		NextRun:       1000,
+	}
+	if got := scheduler.ComputeNextRun(task, time.Unix(2000, 0)); got != nil {
+		t.Errorf("interval=0: expected nil, got %v", *got)
+	}
+}
+
+func TestComputeNextRun_IntervalInvalidValue_ReturnsNil(t *testing.T) {
+	task := types.ScheduledTask{
+		ScheduleType:  types.ScheduleInterval,
+		ScheduleValue: "not-a-number",
+		NextRun:       1000,
+	}
+	if got := scheduler.ComputeNextRun(task, time.Unix(2000, 0)); got != nil {
+		t.Errorf("invalid interval: expected nil, got %v", *got)
 	}
 }
 
@@ -72,37 +92,66 @@ func TestComputeNextRun_CronSchedule(t *testing.T) {
 	task := types.ScheduledTask{
 		ScheduleType:  types.ScheduleCron,
 		ScheduleValue: "0 * * * *", // top of every hour
-		NextRun:       0,
 	}
-	now := time.Unix(1000, 0) // arbitrary
+	now := time.Unix(1_000_000, 0)
 	next := scheduler.ComputeNextRun(task, now)
 	if next == nil {
-		t.Fatal("expected non-nil for cron task")
+		t.Fatal("expected non-nil for valid cron task")
 	}
 	if !next.After(now) {
 		t.Errorf("cron next run %v should be after now %v", *next, now)
 	}
 }
 
+func TestComputeNextRun_InvalidCronExpression_ReturnsNil(t *testing.T) {
+	task := types.ScheduledTask{
+		ScheduleType:  types.ScheduleCron,
+		ScheduleValue: "not a valid cron",
+	}
+	if got := scheduler.ComputeNextRun(task, time.Now()); got != nil {
+		t.Errorf("invalid cron: expected nil, got %v", *got)
+	}
+}
+
+func TestComputeNextRun_UnknownScheduleType_ReturnsNil(t *testing.T) {
+	task := types.ScheduledTask{
+		ScheduleType:  types.ScheduleType("unknown"),
+		ScheduleValue: "whatever",
+		NextRun:       1000,
+	}
+	if got := scheduler.ComputeNextRun(task, time.Now()); got != nil {
+		t.Errorf("unknown type: expected nil, got %v", *got)
+	}
+}
+
 // ---- ValidateGroupFolder ----
 
 func TestValidateGroupFolder_RejectsPathTraversal(t *testing.T) {
-	err := scheduler.ValidateGroupFolder("../../outside")
-	if err == nil {
+	if err := scheduler.ValidateGroupFolder("../../outside"); err == nil {
 		t.Error("expected error for path traversal")
 	}
 }
 
+func TestValidateGroupFolder_RejectsTraversalInMiddle(t *testing.T) {
+	if err := scheduler.ValidateGroupFolder("groups/../../../etc/passwd"); err == nil {
+		t.Error("expected error for traversal in the middle of path")
+	}
+}
+
 func TestValidateGroupFolder_AcceptsAbsolutePath(t *testing.T) {
-	err := scheduler.ValidateGroupFolder("/groups/main")
-	if err != nil {
+	if err := scheduler.ValidateGroupFolder("/groups/main"); err != nil {
 		t.Errorf("unexpected error for absolute path: %v", err)
 	}
 }
 
 func TestValidateGroupFolder_AcceptsSimpleRelativePath(t *testing.T) {
-	err := scheduler.ValidateGroupFolder("groups/main")
-	if err != nil {
+	if err := scheduler.ValidateGroupFolder("groups/main"); err != nil {
 		t.Errorf("unexpected error for simple relative path: %v", err)
+	}
+}
+
+func TestValidateGroupFolder_AcceptsCurrentDirRelative(t *testing.T) {
+	if err := scheduler.ValidateGroupFolder("main"); err != nil {
+		t.Errorf("unexpected error for single-component path: %v", err)
 	}
 }

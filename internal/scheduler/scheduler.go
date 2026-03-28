@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -14,13 +13,17 @@ import (
 	"github.com/jonsampson/gopherclaw/internal/types"
 )
 
-// ComputeNextRun calculates when a task should next run, given the current time.
+// ComputeNextRun calculates when task should next run, given the current time.
 //
-//   - ScheduleOnce tasks return nil (they don't recur).
+//   - ScheduleOnce tasks return nil (they do not recur).
 //   - ScheduleInterval tasks anchor to the previous NextRun to prevent drift:
-//     next = previousNextRun + N*interval, where N is the smallest integer
-//     such that next > now.
-//   - ScheduleCron tasks use a standard cron parser.
+//     next = previousNextRun + N×interval, where N is the smallest positive
+//     integer such that next > now. This means a missed interval is skipped
+//     rather than immediately replayed.
+//   - ScheduleCron tasks use a standard five-field cron expression
+//     (minute hour dom month dow) parsed in UTC.
+//
+// Returns nil for invalid or unrecognised schedule values.
 func ComputeNextRun(task types.ScheduledTask, now time.Time) *time.Time {
 	switch task.ScheduleType {
 	case types.ScheduleOnce:
@@ -31,8 +34,9 @@ func ComputeNextRun(task types.ScheduledTask, now time.Time) *time.Time {
 		if err != nil || intervalSec <= 0 {
 			return nil
 		}
-		// Advance from previous NextRun in steps of intervalSec until we're
-		// strictly in the future. This prevents drift and handles missed intervals.
+		// Advance from the previous NextRun in steps of intervalSec until the
+		// result is strictly in the future. This prevents drift and handles
+		// any number of missed intervals without looping back.
 		next := task.NextRun
 		for next <= now.Unix() {
 			next += intervalSec
@@ -54,13 +58,15 @@ func ComputeNextRun(task types.ScheduledTask, now time.Time) *time.Time {
 	}
 }
 
-// ValidateGroupFolder returns an error if the folder path contains
-// directory traversal components (e.g. "../../outside").
+// ValidateGroupFolder returns an error if folder is unsafe to use as a working
+// directory for a container agent. Absolute paths are always accepted; relative
+// paths must not escape the current directory tree (no ".." components).
 func ValidateGroupFolder(folder string) error {
-	// filepath.Clean resolves ".." — if it changes the path leading components,
-	// flag it as a traversal attempt.
-	clean := filepath.Clean(folder)
-	if strings.HasPrefix(clean, "..") {
+	if filepath.IsAbs(folder) {
+		return nil
+	}
+	// filepath.IsLocal rejects paths containing ".." or rooted with "/".
+	if !filepath.IsLocal(folder) {
 		return fmt.Errorf("group folder %q contains path traversal", folder)
 	}
 	return nil

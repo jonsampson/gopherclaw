@@ -1,21 +1,21 @@
+// Package types defines the core data structures shared across gopherclaw packages.
 package types
 
 // NewMessage represents an inbound message from a messaging channel.
 type NewMessage struct {
-	ID          string
-	ChatJID     string
-	Sender      string
-	Content     string
-	Timestamp   int64
-	IsFromMe    bool
-	IsBotMessage bool
+	ID        string
+	ChatJID   string
+	Sender    string
+	Content   string
+	Timestamp int64
+	IsFromMe  bool // true for messages sent by the bot itself
 }
 
 // RegisteredGroup is a chat group configured to be handled by an agent.
 type RegisteredGroup struct {
 	Name    string
 	Folder  string
-	Trigger string
+	Trigger string // pattern that must prefix messages for non-main groups
 	IsMain  bool
 }
 
@@ -43,17 +43,17 @@ type ScheduledTask struct {
 	GroupFolder   string
 	Prompt        string
 	ScheduleType  ScheduleType
-	ScheduleValue string
+	ScheduleValue string    // interval in seconds, or cron expression
 	Status        TaskStatus
 	NextRun       int64 // Unix timestamp (seconds)
 }
 
 // TaskRunLog records the outcome of a single task execution.
 type TaskRunLog struct {
-	TaskID  int64
-	RanAt   int64
-	Status  string
-	Output  string
+	TaskID int64
+	RanAt  int64
+	Status string
+	Output string
 }
 
 // Channel is the interface that messaging platform adapters must implement.
@@ -89,35 +89,72 @@ type AvailableGroup struct {
 type AllowMode string
 
 const (
+	// AllowModeTrigger means unallowed senders' messages are not processed
+	// but are still stored (they can trigger on-demand if queried directly).
 	AllowModeTrigger AllowMode = "trigger"
-	AllowModeDrop    AllowMode = "drop"
+	// AllowModeDrop means unallowed senders' messages are silently discarded.
+	AllowModeDrop AllowMode = "drop"
 )
+
+// AllowRule represents the set of senders permitted to interact.
+// Use AllowEveryone or AllowOnly to construct values.
+// The zero value permits nobody.
+type AllowRule struct {
+	wildcard bool
+	list     []string
+}
+
+// AllowEveryone returns an AllowRule that permits all senders (the "*" wildcard).
+func AllowEveryone() AllowRule { return AllowRule{wildcard: true} }
+
+// AllowOnly returns an AllowRule that permits only the named senders.
+// Passing nil or an empty slice permits nobody.
+func AllowOnly(senders []string) AllowRule { return AllowRule{list: senders} }
+
+// Allows reports whether sender is permitted by this rule.
+func (r AllowRule) Allows(sender string) bool {
+	if r.wildcard {
+		return true
+	}
+	for _, s := range r.list {
+		if s == sender {
+			return true
+		}
+	}
+	return false
+}
+
+// IsWildcard reports whether this rule allows all senders.
+func (r AllowRule) IsWildcard() bool { return r.wildcard }
+
+// List returns the explicit sender list. Returns nil for wildcard rules.
+func (r AllowRule) List() []string { return r.list }
 
 // ChatAllowlistConfig overrides the default allowlist for a specific chat.
 type ChatAllowlistConfig struct {
-	Allow     interface{} // "*" or []string
+	Allow     AllowRule
 	Mode      AllowMode
-	LogDenied *bool
+	LogDenied *bool // nil means inherit from the top-level AllowlistConfig
 }
 
 // AllowlistConfig is the top-level sender allowlist configuration.
 type AllowlistConfig struct {
-	Allow     interface{} // "*" or []string
+	Allow     AllowRule
 	Mode      AllowMode
 	LogDenied bool
-	PerChat   map[string]ChatAllowlistConfig
+	PerChat   map[string]ChatAllowlistConfig // keyed by chat JID
 }
 
 // ContainerInput is the configuration passed to a container agent invocation.
 type ContainerInput struct {
-	Prompt        string
-	SessionID     string
-	GroupFolder   string
-	ChatJID       string
-	IsMain        bool
+	Prompt          string
+	SessionID       string
+	GroupFolder     string
+	ChatJID         string
+	IsMain          bool
 	IsScheduledTask bool
-	AssistantName string
-	Script        string
+	AssistantName   string
+	Script          string // shell script to execute; populated in tests / lightweight mode
 }
 
 // ContainerStatus indicates success or failure of a container run.
@@ -130,8 +167,8 @@ const (
 
 // ContainerOutput is the result returned by a container agent.
 type ContainerOutput struct {
-	Status     ContainerStatus
-	Result     *string
+	Status       ContainerStatus
+	Result       *string // captured output text; nil on error or when no output markers found
 	NewSessionID string
-	Error      string
+	Error        string // non-empty when Status == ContainerStatusError
 }

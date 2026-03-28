@@ -3,6 +3,7 @@
 package queue
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -147,8 +148,10 @@ func (q *GroupQueue) NotifyIdle(groupID string) {
 }
 
 // SendMessage signals that a message was sent by the container for groupID,
-// which resets the idle state. Returns false if the running item is a task
-// (task containers should not accept messages).
+// which resets the idle state. The text parameter is reserved for future use
+// (e.g. logging or rate-limiting) and is currently ignored.
+// Returns false if the running item is a task; task containers do not send
+// messages back to the chat and should not call this method.
 func (q *GroupQueue) SendMessage(groupID, _ string) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -252,6 +255,11 @@ func (q *GroupQueue) writeClose(groupID string) {
 		return
 	}
 	dir := filepath.Join(q.closeDir, groupID)
-	_ = os.MkdirAll(dir, 0o755)
-	_ = os.WriteFile(filepath.Join(dir, "_close"), []byte{}, 0o644)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		log.Printf("queue: writeClose: mkdir %s: %v", dir, err)
+		return
+	}
+	if err := os.WriteFile(filepath.Join(dir, "_close"), []byte{}, 0o644); err != nil {
+		log.Printf("queue: writeClose: write _close for %s: %v", groupID, err)
+	}
 }
