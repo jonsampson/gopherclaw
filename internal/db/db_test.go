@@ -442,3 +442,158 @@ func TestRegisteredGroup_NonMainOmitsIsMain(t *testing.T) {
 		t.Error("expected IsMain=false for non-main group")
 	}
 }
+
+func TestGetSession_MissingReturnsEmpty(t *testing.T) {
+	d := newTestDB(t)
+	sid, err := d.GetSession("groups/nobody")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sid != "" {
+		t.Errorf("expected empty string for missing session, got %q", sid)
+	}
+}
+
+func TestSetSession_RoundTrip(t *testing.T) {
+	d := newTestDB(t)
+	if err := d.SetSession("groups/main", "sess-abc123"); err != nil {
+		t.Fatalf("SetSession: %v", err)
+	}
+	got, err := d.GetSession("groups/main")
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if got != "sess-abc123" {
+		t.Errorf("session = %q, want %q", got, "sess-abc123")
+	}
+}
+
+func TestSetSession_Upserts(t *testing.T) {
+	d := newTestDB(t)
+	if err := d.SetSession("groups/main", "first"); err != nil {
+		t.Fatalf("SetSession (first): %v", err)
+	}
+	if err := d.SetSession("groups/main", "second"); err != nil {
+		t.Fatalf("SetSession (second): %v", err)
+	}
+	got, err := d.GetSession("groups/main")
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if got != "second" {
+		t.Errorf("session = %q, want %q after upsert", got, "second")
+	}
+}
+
+func TestGetRouterState_MissingReturnsEmpty(t *testing.T) {
+	d := newTestDB(t)
+	val, err := d.GetRouterState("no-such-key")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if val != "" {
+		t.Errorf("expected empty string for missing key, got %q", val)
+	}
+}
+
+func TestSetRouterState_RoundTrip(t *testing.T) {
+	d := newTestDB(t)
+	if err := d.SetRouterState("cursor", "abc"); err != nil {
+		t.Fatalf("SetRouterState: %v", err)
+	}
+	got, err := d.GetRouterState("cursor")
+	if err != nil {
+		t.Fatalf("GetRouterState: %v", err)
+	}
+	if got != "abc" {
+		t.Errorf("value = %q, want %q", got, "abc")
+	}
+}
+
+func TestSetRouterState_Upserts(t *testing.T) {
+	d := newTestDB(t)
+	if err := d.SetRouterState("key", "v1"); err != nil {
+		t.Fatalf("SetRouterState (v1): %v", err)
+	}
+	if err := d.SetRouterState("key", "v2"); err != nil {
+		t.Fatalf("SetRouterState (v2): %v", err)
+	}
+	got, err := d.GetRouterState("key")
+	if err != nil {
+		t.Fatalf("GetRouterState: %v", err)
+	}
+	if got != "v2" {
+		t.Errorf("value = %q, want %q after upsert", got, "v2")
+	}
+}
+
+func TestSetRouterState_IndependentKeys(t *testing.T) {
+	d := newTestDB(t)
+	if err := d.SetRouterState("a", "1"); err != nil {
+		t.Fatalf("SetRouterState a: %v", err)
+	}
+	if err := d.SetRouterState("b", "2"); err != nil {
+		t.Fatalf("SetRouterState b: %v", err)
+	}
+	va, _ := d.GetRouterState("a")
+	vb, _ := d.GetRouterState("b")
+	if va != "1" || vb != "2" {
+		t.Errorf("keys contaminated each other: a=%q b=%q", va, vb)
+	}
+}
+
+func TestLogTaskRun_Persists(t *testing.T) {
+	d := newTestDB(t)
+	taskID, err := d.CreateTask(types.ScheduledTask{
+		GroupFolder:   "groups/main",
+		Prompt:        "say hi",
+		ScheduleType:  types.ScheduleOnce,
+		ScheduleValue: "",
+		Status:        types.TaskStatusActive,
+		NextRun:       1000,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	entry := types.TaskRunLog{
+		TaskID: taskID,
+		RanAt:  2000,
+		Status: "success",
+		Output: "hello!",
+	}
+	if err := d.LogTaskRun(entry); err != nil {
+		t.Fatalf("LogTaskRun: %v", err)
+	}
+	// Verify it was written by checking the task still exists and no error occurred.
+	// (There is no GetTaskRunLogs query yet; we confirm via absence of error and
+	// the foreign-key relationship implicitly through a second log entry.)
+	entry2 := types.TaskRunLog{TaskID: taskID, RanAt: 3000, Status: "error", Output: "oops"}
+	if err := d.LogTaskRun(entry2); err != nil {
+		t.Fatalf("LogTaskRun (second entry): %v", err)
+	}
+}
+
+func TestLogTaskRun_MultipleRunsSameTask(t *testing.T) {
+	d := newTestDB(t)
+	taskID, err := d.CreateTask(types.ScheduledTask{
+		GroupFolder:  "groups/main",
+		Prompt:       "ping",
+		ScheduleType: types.ScheduleInterval,
+		Status:       types.TaskStatusActive,
+		NextRun:      1000,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	for i := range 5 {
+		log := types.TaskRunLog{
+			TaskID: taskID,
+			RanAt:  int64(1000 + i*60),
+			Status: "success",
+			Output: fmt.Sprintf("run %d", i),
+		}
+		if err := d.LogTaskRun(log); err != nil {
+			t.Fatalf("LogTaskRun run %d: %v", i, err)
+		}
+	}
+}

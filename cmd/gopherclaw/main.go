@@ -25,11 +25,16 @@ import (
 	"time"
 
 	"github.com/jonsampson/gopherclaw/internal/allowlist"
+	"github.com/jonsampson/gopherclaw/internal/channels"
 	"github.com/jonsampson/gopherclaw/internal/db"
 	"github.com/jonsampson/gopherclaw/internal/queue"
 	"github.com/jonsampson/gopherclaw/internal/runner"
 	"github.com/jonsampson/gopherclaw/internal/scheduler"
 	"github.com/jonsampson/gopherclaw/internal/types"
+
+	// Skill-branch channel adapters self-register via init() when their
+	// environment variables are present. Add adapters by merging skill branches.
+	_ "github.com/jonsampson/gopherclaw/internal/channels/matrix"
 )
 
 type config struct {
@@ -117,15 +122,25 @@ func (noopChannel) Connect() error                { return nil }
 func (noopChannel) Disconnect() error             { return nil }
 func (noopChannel) SendMessage(_, _ string) error { return nil }
 
+// chatJID returns the chat JID for reply routing.
+// It falls back to GroupID for scheduler tasks that don't set ChatJID.
+func chatJID(item queue.Item) string {
+	if item.ChatJID != "" {
+		return item.ChatJID
+	}
+	return item.GroupID
+}
+
 // processGroup runs the agent script for the given queue item, updating the
 // persisted session ID on success and delivering the result via sender.
 func processGroup(item queue.Item, database *db.DB, sender types.Sender, timeout time.Duration) error {
 	sessionID, _ := database.GetSession(item.GroupID)
+	jid := chatJID(item)
 
 	out := runner.RunContainerAgent(
 		types.ContainerInput{
 			GroupFolder:     item.GroupID,
-			ChatJID:         item.GroupID,
+			ChatJID:         jid,
 			SessionID:       sessionID,
 			IsScheduledTask: item.IsTask,
 			Script:          buildScript(item.GroupID, sessionID),
@@ -159,8 +174,8 @@ func processGroup(item queue.Item, database *db.DB, sender types.Sender, timeout
 	// Deliver the captured result to the chat (not for scheduled task runs,
 	// which typically deliver output via the task's own send_message tool).
 	if out.Result != nil && *out.Result != "" && !item.IsTask {
-		if err := sender.SendMessage(item.GroupID, *out.Result); err != nil {
-			log.Printf("processGroup: SendMessage %s: %v", item.GroupID, err)
+		if err := sender.SendMessage(jid, *out.Result); err != nil {
+			log.Printf("processGroup: SendMessage %s: %v", jid, err)
 		}
 	}
 
@@ -227,7 +242,6 @@ func main() {
 
 	// Load sender allowlist; falls back to allow-all on missing/invalid file.
 	al := allowlist.LoadAllowlist(cfg.AllowlistPath)
-	_ = al // consumed by message routing once a channel adapter is wired in
 
 	// Create the group queue.
 	q := queue.New(cfg.MaxConcurrent, 2*time.Second, 0)
@@ -235,9 +249,50 @@ func main() {
 		q.SetCloseDir(cfg.CloseDir)
 	}
 
-	// Placeholder channel — replace by merging a skill branch, e.g. `git merge skill/matrix`.
-	// Skill branches self-register via init() and are picked up by channels.All() once applied.
+	// ch is declared before the closures below so they capture it by reference.
+	// The for loop below may update it to a real adapter before Connect is called.
 	var ch types.Channel = noopChannel{}
+
+	onMessage := func(chatJID string, msg types.NewMessage) {
+		if allowlist.ShouldDropMessage(al, chatJID, msg.Sender) {
+			return
+		}
+		if err := database.StoreMessage(msg); err != nil {
+			log.Printf("gopherclaw: StoreMessage: %v", err)
+		}
+		if err := database.StoreChatMetadata(chatJID, chatJID, true, msg.Timestamp); err != nil {
+			log.Printf("gopherclaw: StoreChatMetadata: %v", err)
+		}
+		group, err := database.GetRegisteredGroup(chatJID)
+		if err != nil || group == nil {
+			return // room not registered; ignore
+		}
+		if !allowlist.IsTriggerAllowed(al, chatJID, msg.Sender) {
+			return
+		}
+		item := queue.Item{GroupID: group.Folder, ChatJID: chatJID}
+		q.Enqueue(item, func(it queue.Item) error {
+			return processGroup(it, database, ch, cfg.AgentTimeout)
+		})
+	}
+
+	onMetadata := func(chatJID, name string, isGroup bool, _ types.Sender) {
+		if err := database.StoreChatMetadata(chatJID, name, isGroup, 0); err != nil {
+			log.Printf("gopherclaw: StoreChatMetadata (meta): %v", err)
+		}
+	}
+
+	// Instantiate all registered adapters (self-registered via init() in skill packages).
+	registered := channels.All(onMessage, onMetadata)
+	if len(registered) == 0 {
+		log.Println("gopherclaw: no channel adapter registered; running in no-op mode. " +
+			"Apply a skill branch to add a channel, e.g. `git merge skill/matrix`.")
+	}
+	for _, c := range registered {
+		ch = c
+		break // single active channel; multi-channel routing is a future extension
+	}
+
 	if err := ch.Connect(); err != nil {
 		log.Fatalf("gopherclaw: channel.Connect: %v", err)
 	}
@@ -265,6 +320,11 @@ func main() {
 	// Block until shutdown signal.
 	<-ctx.Done()
 	log.Println("gopherclaw: shutdown signal received, draining queue…")
+	// Shutdown prevents new items from being accepted and waits for the
+	// currently-queued items to drain. Containers that are already running
+	// are not interrupted; their output will be delivered before exit.
+	// Note: in-flight runs that outlast the OS-level grace period will be
+	// terminated by the process manager (e.g. systemd's TimeoutStopSec).
 	q.Shutdown()
 	log.Println("gopherclaw: exited cleanly")
 }

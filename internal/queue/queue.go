@@ -18,6 +18,9 @@ type ProcessFunc func(Item) error
 // Item describes a unit of work (either a message batch or a scheduled task).
 type Item struct {
 	GroupID string
+	// ChatJID is the originating chat JID used for reply routing.
+	// Falls back to GroupID when empty (scheduler tasks leave this blank).
+	ChatJID string
 	TaskID  string // non-empty for tasks; used for dedup
 	IsTask  bool
 }
