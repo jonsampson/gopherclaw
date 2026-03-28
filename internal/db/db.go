@@ -397,8 +397,6 @@ func (d *DB) GetAllRegisteredGroups() ([]types.RegisteredGroup, error) {
 	return groups, rows.Err()
 }
 
-// ---- helpers ----
-
 func boolToInt(b bool) int {
 	if b {
 		return 1

@@ -31,8 +31,6 @@ import (
 	"github.com/jonsampson/gopherclaw/internal/types"
 )
 
-// ---- Configuration ----------------------------------------------------------
-
 type config struct {
 	// DBPath is the path to the SQLite database file.
 	// Env: GOPHERCLAW_DB (default: gopherclaw.db)
@@ -102,8 +100,6 @@ func envOr(key, def string) string {
 	return def
 }
 
-// ---- Channel stub -----------------------------------------------------------
-
 // noopChannel is a placeholder Channel that accepts calls but does nothing.
 //
 // TODO: Replace with a real messaging platform adapter. Skill branches provide
@@ -114,8 +110,6 @@ type noopChannel struct{}
 func (noopChannel) Connect() error                { return nil }
 func (noopChannel) Disconnect() error             { return nil }
 func (noopChannel) SendMessage(_, _ string) error { return nil }
-
-// ---- Agent execution --------------------------------------------------------
 
 // processGroup runs the agent script for the given queue item, updating the
 // persisted session ID on success and delivering the result to the channel.
@@ -181,8 +175,6 @@ echo '%s'
 echo '%s'
 `, groupFolder, runner.OutputStart, runner.OutputEnd)
 }
-
-// ---- Entry point ------------------------------------------------------------
 
 func main() {
 	cfg, err := loadConfig()

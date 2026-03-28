@@ -166,8 +166,6 @@ func (q *GroupQueue) SendMessage(groupID, _ string) bool {
 	return true
 }
 
-// ---- internal ----
-
 func (q *GroupQueue) getOrCreate(groupID string) *groupState {
 	gs := q.groups[groupID]
 	if gs == nil {
