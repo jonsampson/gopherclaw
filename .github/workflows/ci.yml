@@ -33,7 +33,11 @@ jobs:
         run: go vet ./...
 
       - name: Test
-        run: go test -race -count=1 -timeout=120s ./...
+        run: go test -race -count=1 -timeout=120s -coverprofile=coverage.out ./...
+
+      - name: Coverage summary
+        run: |
+          go tool cover -func=coverage.out | tail -1 | awk '{print "Coverage: " $3}' >> $GITHUB_STEP_SUMMARY
 
   lint:
     name: Lint
