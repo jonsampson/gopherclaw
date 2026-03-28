@@ -110,7 +110,6 @@ func (d *DB) Close() error {
 	return d.conn.Close()
 }
 
-// ---- Messages ---- //nolint:godot // section divider, not a doc comment
 
 // StoreMessage persists a message, ignoring blank content. Upserts on (id, chat_jid).
 func (d *DB) StoreMessage(msg types.NewMessage) error {
@@ -193,7 +192,6 @@ func scanMessages(rows *sql.Rows) ([]types.NewMessage, error) {
 	return msgs, rows.Err()
 }
 
-// ---- Chats ---- //nolint:godot // section divider, not a doc comment
 
 // StoreChatMetadata records chat info. Name defaults to JID if empty.
 // The timestamp is preserved if the stored value is newer.
@@ -234,7 +232,6 @@ func (d *DB) GetAllChats() ([]types.ChatInfo, error) {
 	return chats, rows.Err()
 }
 
-// ---- Scheduled Tasks ---- //nolint:godot // section divider, not a doc comment
 
 // CreateTask inserts a new scheduled task and returns its ID.
 func (d *DB) CreateTask(task types.ScheduledTask) (int64, error) {

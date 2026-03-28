@@ -232,7 +232,6 @@ func TestWaitingGroupsDrainWhenSlotFrees(t *testing.T) {
 	unblocks := make([]chan struct{}, 3)
 	for i := range 3 {
 		wg.Add(1)
-		i := i
 		u := make(chan struct{})
 		unblocks[i] = u
 		procs[i] = func(_ queue.Item) error {
