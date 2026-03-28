@@ -110,7 +110,6 @@ func (d *DB) Close() error {
 	return d.conn.Close()
 }
 
-
 // StoreMessage persists a message, ignoring blank content. Upserts on (id, chat_jid).
 func (d *DB) StoreMessage(msg types.NewMessage) error {
 	if msg.Content == "" {
@@ -192,7 +191,6 @@ func scanMessages(rows *sql.Rows) ([]types.NewMessage, error) {
 	return msgs, rows.Err()
 }
 
-
 // StoreChatMetadata records chat info. Name defaults to JID if empty.
 // The timestamp is preserved if the stored value is newer.
 func (d *DB) StoreChatMetadata(jid, name string, isGroup bool, lastActivity int64) error {
@@ -231,7 +229,6 @@ func (d *DB) GetAllChats() ([]types.ChatInfo, error) {
 	}
 	return chats, rows.Err()
 }
-
 
 // CreateTask inserts a new scheduled task and returns its ID.
 func (d *DB) CreateTask(task types.ScheduledTask) (int64, error) {
@@ -309,8 +306,6 @@ func (d *DB) LogTaskRun(log types.TaskRunLog) error {
 	return err
 }
 
-// ---- Router State ----
-
 // GetRouterState retrieves a persisted key-value pair.
 func (d *DB) GetRouterState(key string) (string, error) {
 	var value string
@@ -330,8 +325,6 @@ func (d *DB) SetRouterState(key, value string) error {
 	return err
 }
 
-// ---- Sessions ----
-
 // GetSession returns the Claude session ID for a group folder.
 func (d *DB) GetSession(groupFolder string) (string, error) {
 	var sid string
@@ -350,8 +343,6 @@ func (d *DB) SetSession(groupFolder, sessionID string) error {
 	`, groupFolder, sessionID)
 	return err
 }
-
-// ---- Registered Groups ----
 
 // GetRegisteredGroup returns the group config for a JID.
 func (d *DB) GetRegisteredGroup(jid string) (*types.RegisteredGroup, error) {
