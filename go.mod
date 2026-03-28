@@ -1,8 +1,6 @@
 module github.com/jonsampson/gopherclaw
 
-go 1.25
-
-toolchain go1.25.1
+go 1.24
 
 require (
 	github.com/mattn/go-sqlite3 v1.14.24 // indirect

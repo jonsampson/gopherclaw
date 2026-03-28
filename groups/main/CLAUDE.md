@@ -100,6 +100,7 @@ filesystem is mounted as follows for the main group:
 |-------------------------|------------------------|------------|
 | `/workspace/project`    | gopherclaw project root | read-only  |
 | `/workspace/group`      | `groups/main/`          | read-write |
+| `/workspace/global`     | `groups/global/`        | read-write |
 
 Key paths accessible from within the container:
 
@@ -109,6 +110,7 @@ Key paths accessible from within the container:
 | `/workspace/project/groups/`       | All group folders                           |
 | `/workspace/group/CLAUDE.md`       | This file (your memory / system prompt)     |
 | `/workspace/group/conversations/`  | Conversation history                        |
+| `/workspace/global/`               | Shared resources accessible to all groups   |
 
 ---
 
