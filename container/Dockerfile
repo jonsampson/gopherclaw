@@ -26,7 +26,7 @@ ENV PATH="/home/claude/.claude/local:${PATH}"
 # Switch to non-root user for all subsequent steps
 USER claude
 
-# Install claude CLI via native binary installer (no Node.js required)
+# Install claude CLI via native binary installer
 RUN curl -fsSL https://claude.ai/install.sh | bash
 
 # Create entrypoint script.
