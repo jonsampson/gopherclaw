@@ -22,6 +22,14 @@ Single Go binary. Channel adapters (WhatsApp, Telegram, Slack, Discord) are skil
 | `internal/runner/runner.go` | Spawns agent subprocess, captures output between sentinel markers |
 | `groups/main/CLAUDE.md` | Default main-group agent system prompt (edit this to customise the agent) |
 | `groups/global/` | Shared resources accessible to all groups |
+| `container/Dockerfile` | Agent container image: debian-slim + claude CLI, reads JSON from stdin |
+| `container/build.sh` | Builds the agent container image |
+| `container/skills/` | Container-side skills loaded inside the agent container at runtime |
+| `launchd/com.gopherclaw.plist` | macOS launchd service file (template vars substituted by `/setup`) |
+
+## Secrets / Credentials / OneCLI
+
+API keys, secret keys, OAuth tokens, and auth credentials are managed by the OneCLI gateway — which handles secret injection into containers at request time, so no keys or tokens are ever passed to containers directly. Run `onecli --help`. See `/init-onecli` to install.
 
 ## Skills
 
@@ -62,6 +70,22 @@ golangci-lint run
 
 # Format
 gofmt -l -w .
+
+# Build agent container
+./container/build.sh
+```
+
+Service management:
+```bash
+# macOS (launchd) — substitute {{...}} vars in plist first via /setup
+launchctl load ~/Library/LaunchAgents/com.gopherclaw.plist
+launchctl unload ~/Library/LaunchAgents/com.gopherclaw.plist
+launchctl kickstart -k gui/$(id -u)/com.gopherclaw  # restart
+
+# Linux (systemd)
+systemctl --user start gopherclaw
+systemctl --user stop gopherclaw
+systemctl --user restart gopherclaw
 ```
 
 ## Package Import Rules

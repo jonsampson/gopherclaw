@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS launchd service for GopherClaw.
+
+  Install via /setup skill, which substitutes {{...}} template variables:
+    {{GOPHERCLAW_BINARY_PATH}} — absolute path to the compiled gopherclaw binary
+    {{PROJECT_ROOT}}           — absolute path to the repository root
+
+  Manual install (after substitution):
+    cp launchd/com.gopherclaw.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.gopherclaw.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.gopherclaw</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{GOPHERCLAW_BINARY_PATH}}</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>{{PROJECT_ROOT}}/logs/gopherclaw.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>{{PROJECT_ROOT}}/logs/gopherclaw.error.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>{{PROJECT_ROOT}}</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>{{HOME}}</string>
+        <key>GOPHERCLAW_DB</key>
+        <string>{{PROJECT_ROOT}}/gopherclaw.db</string>
+        <key>GOPHERCLAW_ALLOWLIST</key>
+        <string>{{PROJECT_ROOT}}/allowlist.json</string>
+    </dict>
+</dict>
+</plist>

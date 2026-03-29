@@ -57,16 +57,21 @@ type config struct {
 	// SchedulerPoll is how often the scheduler checks for due tasks.
 	// Env: GOPHERCLAW_SCHEDULER_POLL (default: 15s)
 	SchedulerPoll time.Duration
+
+	// ContainerImage is the Docker image used for agent runs.
+	// Env: GOPHERCLAW_CONTAINER_IMAGE (default: gopherclaw-agent:latest)
+	ContainerImage string
 }
 
 func loadConfig() (config, error) {
 	cfg := config{
-		DBPath:        envOr("GOPHERCLAW_DB", "gopherclaw.db"),
-		AllowlistPath: envOr("GOPHERCLAW_ALLOWLIST", "allowlist.json"),
-		CloseDir:      os.Getenv("GOPHERCLAW_CLOSE_DIR"),
-		MaxConcurrent: 4,
-		AgentTimeout:  5 * time.Minute,
-		SchedulerPoll: 15 * time.Second,
+		DBPath:         envOr("GOPHERCLAW_DB", "gopherclaw.db"),
+		AllowlistPath:  envOr("GOPHERCLAW_ALLOWLIST", "allowlist.json"),
+		CloseDir:       os.Getenv("GOPHERCLAW_CLOSE_DIR"),
+		MaxConcurrent:  4,
+		AgentTimeout:   5 * time.Minute,
+		SchedulerPoll:  15 * time.Second,
+		ContainerImage: envOr("GOPHERCLAW_CONTAINER_IMAGE", "gopherclaw-agent:latest"),
 	}
 
 	if s := os.Getenv("GOPHERCLAW_MAX_CONCURRENT"); s != "" {
@@ -152,28 +157,39 @@ func processGroup(item queue.Item, database *db.DB, ch types.Channel, timeout ti
 
 // buildScript returns the shell script executed for each agent run.
 //
-// The script must print the agent's response between the gopherclaw output
-// markers so the runner can capture it:
+// The script passes a ContainerInput JSON payload to the agent container via
+// stdin. The container's entrypoint runs claude --print and wraps the response
+// in GOPHERCLAW_OUTPUT_START / _END sentinels, which runner.RunContainerAgent
+// captures.
 //
-//	echo '---GOPHERCLAW_OUTPUT_START---'
-//	# … your agent invocation here …
-//	echo '---GOPHERCLAW_OUTPUT_END---'
+// The container image is selected by GOPHERCLAW_CONTAINER_IMAGE (default:
+// gopherclaw-agent:latest). Build it with ./container/build.sh.
 //
-// TODO: Replace the placeholder below with a real invocation, for example:
+// The prompt is read from groups/<group>/pending_message.txt. Channel adapters
+// are responsible for writing that file before enqueuing the group item.
 //
-//	cd <groupFolder> && claude --print "<prompt>" 2>&1
-//
-// When the Claude CLI runs inside the group folder it automatically picks up
-// groups/<name>/CLAUDE.md as its memory/system-prompt file.
-func buildScript(groupFolder, _ string) string {
-	return fmt.Sprintf(`
-cd %q || exit 1
-echo '%s'
-# TODO: invoke the Claude CLI here, e.g.:
-#   claude --print "$(cat pending_message.txt)" 2>&1
-# The CLI reads CLAUDE.md in the current directory as its system prompt.
-echo '%s'
-`, groupFolder, runner.OutputStart, runner.OutputEnd)
+// sessionID is expected to be alphanumeric (e.g. a UUID); it is embedded
+// directly into the JSON string without additional escaping.
+func buildScript(groupFolder, sessionID string) string {
+	return fmt.Sprintf(`#!/bin/sh
+set -e
+IMAGE="${GOPHERCLAW_CONTAINER_IMAGE:-%s}"
+RUNTIME="${CONTAINER_RUNTIME:-docker}"
+
+# Channel adapters write the inbound message here before enqueuing.
+PROMPT=$(cat "groups/%s/pending_message.txt" 2>/dev/null || true)
+
+# Encode input as JSON; jq handles special characters in PROMPT safely.
+INPUT=$(jq -cn --arg p "$PROMPT" --arg s "%s" --arg g "%s" \
+  '{Prompt:$p,SessionID:$s,GroupFolder:$g,IsMain:false}')
+
+# The container prints output between GOPHERCLAW sentinel markers.
+"$RUNTIME" run --rm -i \
+  -v "$(pwd)/groups/%s:/workspace/group:rw" \
+  -v "$(pwd)/groups/global:/workspace/global:ro" \
+  "$IMAGE" <<< "$INPUT"
+`,
+		"gopherclaw-agent:latest", groupFolder, sessionID, groupFolder, groupFolder)
 }
 
 func main() {
@@ -222,8 +238,8 @@ func main() {
 		})
 	}, cfg.SchedulerPoll)
 
-	log.Printf("gopherclaw: started (db=%s, maxConcurrent=%d, schedulerPoll=%s)",
-		cfg.DBPath, cfg.MaxConcurrent, cfg.SchedulerPoll)
+	log.Printf("gopherclaw: started (db=%s, maxConcurrent=%d, schedulerPoll=%s, containerImage=%s)",
+		cfg.DBPath, cfg.MaxConcurrent, cfg.SchedulerPoll, cfg.ContainerImage)
 
 	// Block until shutdown signal.
 	<-ctx.Done()
