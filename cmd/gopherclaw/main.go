@@ -158,19 +158,21 @@ func processGroup(item queue.Item, database *db.DB, ch types.Channel, timeout ti
 // buildScript returns the shell script executed for each agent run.
 //
 // The script passes a ContainerInput JSON payload to the agent container via
-// stdin. The container's entrypoint runs claude --print and wraps the response
-// in GOPHERCLAW_OUTPUT_START / _END sentinels, which runner.RunContainerAgent
-// captures.
+// stdin. The container's entrypoint runs claude --continue --print and wraps
+// the response in GOPHERCLAW_OUTPUT_START / _END sentinels, which
+// runner.RunContainerAgent captures.
+//
+// Session continuity is achieved by mounting groups/<group>/.claude/ into the
+// container at /home/claude/.claude/. The claude CLI persists session state
+// there; --continue resumes the most recent session automatically. On first
+// run (empty mount) it starts a new session.
 //
 // The container image is selected by GOPHERCLAW_CONTAINER_IMAGE (default:
 // gopherclaw-agent:latest). Build it with ./container/build.sh.
 //
 // The prompt is read from groups/<group>/pending_message.txt. Channel adapters
 // are responsible for writing that file before enqueuing the group item.
-//
-// sessionID is expected to be alphanumeric (e.g. a UUID); it is embedded
-// directly into the JSON string without additional escaping.
-func buildScript(groupFolder, sessionID string) string {
+func buildScript(groupFolder, _ string) string {
 	return fmt.Sprintf(`#!/bin/sh
 set -e
 IMAGE="${GOPHERCLAW_CONTAINER_IMAGE:-%s}"
@@ -180,16 +182,21 @@ RUNTIME="${CONTAINER_RUNTIME:-docker}"
 PROMPT=$(cat "groups/%s/pending_message.txt" 2>/dev/null || true)
 
 # Encode input as JSON; jq handles special characters in PROMPT safely.
-INPUT=$(jq -cn --arg p "$PROMPT" --arg s "%s" --arg g "%s" \
-  '{Prompt:$p,SessionID:$s,GroupFolder:$g,IsMain:false}')
+INPUT=$(jq -cn --arg p "$PROMPT" --arg g "%s" \
+  '{Prompt:$p,GroupFolder:$g,IsMain:false}')
+
+# Ensure the per-group session state directory exists on the host.
+mkdir -p "groups/%s/.claude"
 
 # The container prints output between GOPHERCLAW sentinel markers.
+# ~/.claude/ is mounted so claude --continue resumes across container runs.
 "$RUNTIME" run --rm -i \
   -v "$(pwd)/groups/%s:/workspace/group:rw" \
   -v "$(pwd)/groups/global:/workspace/global:ro" \
+  -v "$(pwd)/groups/%s/.claude:/home/claude/.claude:rw" \
   "$IMAGE" <<< "$INPUT"
 `,
-		"gopherclaw-agent:latest", groupFolder, sessionID, groupFolder, groupFolder)
+		"gopherclaw-agent:latest", groupFolder, groupFolder, groupFolder, groupFolder, groupFolder)
 }
 
 func main() {

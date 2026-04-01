@@ -1,0 +1,19 @@
+[Unit]
+Description=GopherClaw agent gateway
+After=network.target
+
+[Service]
+Type=simple
+ExecStart={{GOPHERCLAW_BINARY_PATH}}
+WorkingDirectory={{PROJECT_ROOT}}
+Restart=always
+RestartSec=5
+
+StandardOutput=append:{{PROJECT_ROOT}}/logs/gopherclaw.log
+StandardError=append:{{PROJECT_ROOT}}/logs/gopherclaw.error.log
+
+Environment=GOPHERCLAW_DB={{PROJECT_ROOT}}/gopherclaw.db
+Environment=GOPHERCLAW_ALLOWLIST={{PROJECT_ROOT}}/allowlist.json
+
+[Install]
+WantedBy=default.target

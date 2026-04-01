@@ -26,6 +26,7 @@ Single Go binary. Channel adapters (WhatsApp, Telegram, Slack, Discord) are skil
 | `container/build.sh` | Builds the agent container image |
 | `container/skills/` | Container-side skills loaded inside the agent container at runtime |
 | `launchd/com.gopherclaw.plist` | macOS launchd service file (template vars substituted by `/setup`) |
+| `systemd/gopherclaw.service` | Linux systemd user service file (template vars substituted by `/setup`) |
 
 ## Secrets / Credentials / OneCLI
 
@@ -82,7 +83,7 @@ launchctl load ~/Library/LaunchAgents/com.gopherclaw.plist
 launchctl unload ~/Library/LaunchAgents/com.gopherclaw.plist
 launchctl kickstart -k gui/$(id -u)/com.gopherclaw  # restart
 
-# Linux (systemd)
+# Linux (systemd) — substitute {{...}} vars in service file first via /setup
 systemctl --user start gopherclaw
 systemctl --user stop gopherclaw
 systemctl --user restart gopherclaw
