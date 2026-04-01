@@ -344,13 +344,30 @@ func (d *DB) SetSession(groupFolder, sessionID string) error {
 	return err
 }
 
+// GetRegisteredGroupByFolder returns the group config for a folder name.
+func (d *DB) GetRegisteredGroupByFolder(folder string) (*types.RegisteredGroup, error) {
+	var g types.RegisteredGroup
+	var isMain int
+	err := d.conn.QueryRow(`
+		SELECT jid, name, folder, trigger, is_main FROM registered_groups WHERE folder=?
+	`, folder).Scan(&g.JID, &g.Name, &g.Folder, &g.Trigger, &isMain)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("group folder %q not found", folder)
+	}
+	if err != nil {
+		return nil, err
+	}
+	g.IsMain = isMain != 0
+	return &g, nil
+}
+
 // GetRegisteredGroup returns the group config for a JID.
 func (d *DB) GetRegisteredGroup(jid string) (*types.RegisteredGroup, error) {
 	var g types.RegisteredGroup
 	var isMain int
 	err := d.conn.QueryRow(`
-		SELECT name, folder, trigger, is_main FROM registered_groups WHERE jid=?
-	`, jid).Scan(&g.Name, &g.Folder, &g.Trigger, &isMain)
+		SELECT jid, name, folder, trigger, is_main FROM registered_groups WHERE jid=?
+	`, jid).Scan(&g.JID, &g.Name, &g.Folder, &g.Trigger, &isMain)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("group %q not found", jid)
 	}
@@ -378,7 +395,7 @@ func (d *DB) SetRegisteredGroup(jid string, g types.RegisteredGroup) error {
 // GetAllRegisteredGroups returns all registered groups.
 func (d *DB) GetAllRegisteredGroups() ([]types.RegisteredGroup, error) {
 	rows, err := d.conn.Query(`
-		SELECT name, folder, trigger, is_main FROM registered_groups
+		SELECT jid, name, folder, trigger, is_main FROM registered_groups
 	`)
 	if err != nil {
 		return nil, err
@@ -388,7 +405,7 @@ func (d *DB) GetAllRegisteredGroups() ([]types.RegisteredGroup, error) {
 	for rows.Next() {
 		var g types.RegisteredGroup
 		var isMain int
-		if err := rows.Scan(&g.Name, &g.Folder, &g.Trigger, &isMain); err != nil {
+		if err := rows.Scan(&g.JID, &g.Name, &g.Folder, &g.Trigger, &isMain); err != nil {
 			return nil, err
 		}
 		g.IsMain = isMain != 0

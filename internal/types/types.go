@@ -13,6 +13,7 @@ type NewMessage struct {
 
 // RegisteredGroup is a chat group configured to be handled by an agent.
 type RegisteredGroup struct {
+	JID     string // unique chat identifier from the messaging platform
 	Name    string
 	Folder  string
 	Trigger string // pattern that must prefix messages for non-main groups

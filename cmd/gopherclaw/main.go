@@ -26,6 +26,7 @@ import (
 
 	"github.com/jonsampson/gopherclaw/internal/allowlist"
 	"github.com/jonsampson/gopherclaw/internal/db"
+	"github.com/jonsampson/gopherclaw/internal/ipc"
 	"github.com/jonsampson/gopherclaw/internal/queue"
 	"github.com/jonsampson/gopherclaw/internal/runner"
 	"github.com/jonsampson/gopherclaw/internal/scheduler"
@@ -62,6 +63,10 @@ type config struct {
 	// ContainerImage is the Docker image used for agent runs.
 	// Env: GOPHERCLAW_CONTAINER_IMAGE (default: gopherclaw-agent:latest)
 	ContainerImage string
+
+	// GroupsDir is the directory containing per-group folders.
+	// Env: GOPHERCLAW_GROUPS_DIR (default: groups)
+	GroupsDir string
 }
 
 func loadConfig() (config, error) {
@@ -73,6 +78,7 @@ func loadConfig() (config, error) {
 		AgentTimeout:   5 * time.Minute,
 		SchedulerPoll:  15 * time.Second,
 		ContainerImage: envOr("GOPHERCLAW_CONTAINER_IMAGE", "gopherclaw-agent:latest"),
+		GroupsDir:      envOr("GOPHERCLAW_GROUPS_DIR", "groups"),
 	}
 
 	if s := os.Getenv("GOPHERCLAW_MAX_CONCURRENT"); s != "" {
@@ -119,16 +125,25 @@ func (noopChannel) SendMessage(_, _ string) error { return nil }
 
 // processGroup runs the agent script for the given queue item, updating the
 // persisted session ID on success and delivering the result to the channel.
-func processGroup(item queue.Item, database *db.DB, ch types.Channel, timeout time.Duration) error {
+func processGroup(item queue.Item, database *db.DB, ch types.Channel, timeout time.Duration, groupsDir string) error {
 	sessionID, _ := database.GetSession(item.GroupID)
+
+	// Resolve the group's JID and IsMain flag from the DB; fall back to folder name as JID.
+	chatJID := item.GroupID
+	isMain := false
+	if g, err := database.GetRegisteredGroupByFolder(item.GroupID); err == nil {
+		chatJID = g.JID
+		isMain = g.IsMain
+	}
 
 	out := runner.RunContainerAgent(
 		types.ContainerInput{
 			GroupFolder:     item.GroupID,
-			ChatJID:         item.GroupID,
+			ChatJID:         chatJID,
 			SessionID:       sessionID,
+			IsMain:          isMain,
 			IsScheduledTask: item.IsTask,
-			Script:          buildScript(item.GroupID, sessionID),
+			Script:          buildScript(item.GroupID, sessionID, chatJID, isMain, groupsDir),
 		},
 		nil, // onOutput: set this to deliver streaming output if your channel supports it
 		timeout,
@@ -175,42 +190,58 @@ func processGroup(item queue.Item, database *db.DB, ch types.Channel, timeout ti
 // the session ID between GOPHERCLAW sentinel markers; processGroup extracts
 // the session ID and persists it for the next run.
 //
-// groups/<group>/.claude/ is mounted into the container so the claude CLI's
-// local session transcript persists across runs (--resume reads it from there).
+// Volume mounts:
+//   - <groupsDir>/<group>/          → /workspace/group  (rw, agent working dir)
+//   - <groupsDir>/global/           → /workspace/global (ro, shared context)
+//   - <groupsDir>/<group>/.claude/  → /home/claude/.claude (rw, session state)
+//   - <groupsDir>/<group>/.ipc/     → /workspace/ipc    (rw, MCP tool IPC files)
 //
 // The container image is selected by GOPHERCLAW_CONTAINER_IMAGE (default:
 // gopherclaw-agent:latest). Build it with ./container/build.sh.
 //
-// The prompt is read from groups/<group>/pending_message.txt. Channel adapters
-// are responsible for writing that file before enqueuing the group item.
-//
-// sessionID is expected to be a UUID; it is embedded directly into the JSON
-// string and should not contain characters that would break the jq invocation.
-func buildScript(groupFolder, sessionID string) string {
+// The prompt is read from <groupsDir>/<group>/pending_message.txt. Channel
+// adapters are responsible for writing that file before enqueuing the group.
+func buildScript(groupFolder, sessionID, chatJID string, isMain bool, groupsDir string) string {
+	isMainStr := "false"
+	if isMain {
+		isMainStr = "true"
+	}
 	return fmt.Sprintf(`#!/bin/sh
 set -e
 IMAGE="${GOPHERCLAW_CONTAINER_IMAGE:-%s}"
 RUNTIME="${CONTAINER_RUNTIME:-docker}"
+GROUPS_DIR="%s"
 
 # Channel adapters write the inbound message here before enqueuing.
-PROMPT=$(cat "groups/%s/pending_message.txt" 2>/dev/null || true)
+PROMPT=$(cat "${GROUPS_DIR}/%s/pending_message.txt" 2>/dev/null || true)
 
 # Encode input as JSON; jq handles special characters in PROMPT safely.
-INPUT=$(jq -cn --arg p "$PROMPT" --arg s "%s" --arg g "%s" \
-  '{Prompt:$p,SessionID:$s,GroupFolder:$g,IsMain:false}')
+INPUT=$(jq -cn \
+  --arg p "$PROMPT" \
+  --arg s "%s" \
+  --arg g "%s" \
+  --arg j "%s" \
+  --argjson m %s \
+  '{Prompt:$p,SessionID:$s,GroupFolder:$g,ChatJID:$j,IsMain:$m}')
 
-# Ensure the per-group session state directory exists on the host.
-mkdir -p "groups/%s/.claude"
+# Ensure per-group state directories exist on the host.
+mkdir -p "${GROUPS_DIR}/%s/.claude" "${GROUPS_DIR}/%s/.ipc"
 
 # The container entrypoint outputs SESSION_ID:<id> then the response,
 # all between GOPHERCLAW sentinel markers.
 "$RUNTIME" run --rm -i \
-  -v "$(pwd)/groups/%s:/workspace/group:rw" \
-  -v "$(pwd)/groups/global:/workspace/global:ro" \
-  -v "$(pwd)/groups/%s/.claude:/home/claude/.claude:rw" \
+  -v "$(pwd)/${GROUPS_DIR}/%s:/workspace/group:rw" \
+  -v "$(pwd)/${GROUPS_DIR}/global:/workspace/global:ro" \
+  -v "$(pwd)/${GROUPS_DIR}/%s/.claude:/home/claude/.claude:rw" \
+  -v "$(pwd)/${GROUPS_DIR}/%s/.ipc:/workspace/ipc:rw" \
   "$IMAGE" <<< "$INPUT"
 `,
-		"gopherclaw-agent:latest", groupFolder, sessionID, groupFolder, groupFolder, groupFolder, groupFolder)
+		"gopherclaw-agent:latest",
+		groupsDir,
+		groupFolder,
+		sessionID, groupFolder, chatJID, isMainStr,
+		groupFolder, groupFolder,
+		groupFolder, groupFolder, groupFolder)
 }
 
 func main() {
@@ -255,9 +286,13 @@ func main() {
 			IsTask:  true,
 		}
 		q.EnqueueTask(item, func(it queue.Item) error {
-			return processGroup(it, database, ch, cfg.AgentTimeout)
+			return processGroup(it, database, ch, cfg.AgentTimeout, cfg.GroupsDir)
 		})
 	}, cfg.SchedulerPoll)
+
+	// Run the IPC watcher to process send_message and task operations written
+	// by the agent container's MCP tools.
+	go ipc.New(cfg.GroupsDir, cfg.SchedulerPoll, database, ch).Start(ctx)
 
 	log.Printf("gopherclaw: started (db=%s, maxConcurrent=%d, schedulerPoll=%s, containerImage=%s)",
 		cfg.DBPath, cfg.MaxConcurrent, cfg.SchedulerPoll, cfg.ContainerImage)
