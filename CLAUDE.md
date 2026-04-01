@@ -22,12 +22,10 @@ Single Go binary. Channel adapters (WhatsApp, Telegram, Slack, Discord) are skil
 | `internal/runner/runner.go` | Spawns agent subprocess, captures output between sentinel markers |
 | `groups/main/CLAUDE.md` | Default main-group agent system prompt (edit this to customise the agent) |
 | `groups/global/` | Shared resources accessible to all groups |
-| `container/Dockerfile` | Agent container image: debian-slim + claude CLI + MCP server, reads JSON from stdin |
+| `container/Dockerfile` | Agent container image: debian-slim + claude CLI, reads JSON from stdin |
 | `container/build.sh` | Builds the agent container image |
-| `container/entrypoint.sh` | Container entrypoint: configures MCP, runs claude, emits sentinel-wrapped output |
-| `container/mcp-server/` | Go MCP server bundled into the container; exposes IPC tools to the claude agent |
+| `container/entrypoint.sh` | Container entrypoint: runs claude, emits sentinel-wrapped output with SESSION_ID |
 | `container/skills/` | Container-side skills loaded inside the agent container at runtime |
-| `internal/ipc/ipc.go` | Host-side IPC watcher: reads MCP tool output files, delivers messages, processes task ops |
 | `launchd/com.gopherclaw.plist` | macOS launchd service file (template vars substituted by `/setup`) |
 | `systemd/gopherclaw.service` | Linux systemd user service file (template vars substituted by `/setup`) |
 

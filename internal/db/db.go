@@ -344,23 +344,6 @@ func (d *DB) SetSession(groupFolder, sessionID string) error {
 	return err
 }
 
-// GetRegisteredGroupByFolder returns the group config for a folder name.
-func (d *DB) GetRegisteredGroupByFolder(folder string) (*types.RegisteredGroup, error) {
-	var g types.RegisteredGroup
-	var isMain int
-	err := d.conn.QueryRow(`
-		SELECT jid, name, folder, trigger, is_main FROM registered_groups WHERE folder=?
-	`, folder).Scan(&g.JID, &g.Name, &g.Folder, &g.Trigger, &isMain)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("group folder %q not found", folder)
-	}
-	if err != nil {
-		return nil, err
-	}
-	g.IsMain = isMain != 0
-	return &g, nil
-}
-
 // GetRegisteredGroup returns the group config for a JID.
 func (d *DB) GetRegisteredGroup(jid string) (*types.RegisteredGroup, error) {
 	var g types.RegisteredGroup
