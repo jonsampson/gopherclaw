@@ -249,6 +249,56 @@ Scheduled tasks are enqueued as high-priority items and preempt queued messages.
 
 ---
 
+## MCP tools
+
+Agents run inside Docker containers with `groups/<name>/.claude/` mounted at
+`/home/claude/.claude/`. This directory persists across runs (the container is
+`--rm` but the host directory is not), so any MCP server configuration written
+there survives between invocations.
+
+### How gopherclaw handles MCP
+
+gopherclaw does **not** act as an MCP server or broker MCP calls on behalf of
+agents. Each agent configures and launches its own MCP servers directly, the
+same way any Claude Code session would. This keeps gopherclaw's role narrow
+(routing and scheduling) and lets each group's agent have a different set of
+tools without any changes to gopherclaw itself.
+
+### Configuring MCP servers
+
+MCP servers are registered in `~/.claude/settings.json` (inside the container,
+which maps to `groups/<name>/.claude/settings.json` on the host). Use
+`claude mcp add` or edit the file directly.
+
+The simplest way to pre-configure MCP for all runs of a group is to create the
+settings file once on the host:
+
+```sh
+# On the host, before the first agent run for that group:
+mkdir -p groups/my-group/.claude
+claude mcp add --scope local my-tool -- /path/to/mcp-server
+# The resulting settings.json is now at groups/my-group/.claude/settings.json
+# and will be present inside the container on every run.
+```
+
+Alternatively, add a container skill that writes the configuration at container
+startup — see `container/skills/README.md`.
+
+### MCP servers that need network access or secrets
+
+Because containers run with `--rm` and no network policy beyond the default
+Docker bridge, MCP servers that call external APIs must either:
+
+- Run on the **host** and be reachable from inside the container via the Docker
+  host gateway (`host-gateway` extra host or `host.docker.internal`), or
+- Be bundled **inside the container image** as part of a container skill.
+
+Secrets (API keys) for MCP servers follow the same rule as all other secrets:
+managed by the OneCLI gateway, injected at request time. See
+[Secrets / Credentials / OneCLI](#secrets--credentials--onecli).
+
+---
+
 ## Channel adapters
 
 A channel adapter is any type that implements `types.Channel`:
