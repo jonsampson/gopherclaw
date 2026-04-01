@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -133,9 +134,20 @@ func processGroup(item queue.Item, database *db.DB, ch types.Channel, timeout ti
 		timeout,
 	)
 
-	// Persist the new session ID so the next run resumes the same conversation.
-	if out.NewSessionID != "" && out.NewSessionID != sessionID {
-		if err := database.SetSession(item.GroupID, out.NewSessionID); err != nil {
+	// The container entrypoint prefixes the output with "SESSION_ID:<id>\n".
+	// Extract it here so the session can be persisted and the raw text
+	// delivered to the channel is clean.
+	newSessionID := sessionID
+	if out.Result != nil {
+		if line, rest, found := strings.Cut(*out.Result, "\n"); found && strings.HasPrefix(line, "SESSION_ID:") {
+			newSessionID = strings.TrimPrefix(line, "SESSION_ID:")
+			*out.Result = rest
+		}
+	}
+
+	// Persist the session ID so the next run resumes the same conversation.
+	if newSessionID != "" && newSessionID != sessionID {
+		if err := database.SetSession(item.GroupID, newSessionID); err != nil {
 			log.Printf("processGroup: SetSession %s: %v", item.GroupID, err)
 		}
 	}
@@ -158,21 +170,23 @@ func processGroup(item queue.Item, database *db.DB, ch types.Channel, timeout ti
 // buildScript returns the shell script executed for each agent run.
 //
 // The script passes a ContainerInput JSON payload to the agent container via
-// stdin. The container's entrypoint runs claude --continue --print and wraps
-// the response in GOPHERCLAW_OUTPUT_START / _END sentinels, which
-// runner.RunContainerAgent captures.
+// stdin. The entrypoint uses --resume <sessionID> when a session ID is
+// provided, or starts a new session on first run. It outputs the response and
+// the session ID between GOPHERCLAW sentinel markers; processGroup extracts
+// the session ID and persists it for the next run.
 //
-// Session continuity is achieved by mounting groups/<group>/.claude/ into the
-// container at /home/claude/.claude/. The claude CLI persists session state
-// there; --continue resumes the most recent session automatically. On first
-// run (empty mount) it starts a new session.
+// groups/<group>/.claude/ is mounted into the container so the claude CLI's
+// local session transcript persists across runs (--resume reads it from there).
 //
 // The container image is selected by GOPHERCLAW_CONTAINER_IMAGE (default:
 // gopherclaw-agent:latest). Build it with ./container/build.sh.
 //
 // The prompt is read from groups/<group>/pending_message.txt. Channel adapters
 // are responsible for writing that file before enqueuing the group item.
-func buildScript(groupFolder, _ string) string {
+//
+// sessionID is expected to be a UUID; it is embedded directly into the JSON
+// string and should not contain characters that would break the jq invocation.
+func buildScript(groupFolder, sessionID string) string {
 	return fmt.Sprintf(`#!/bin/sh
 set -e
 IMAGE="${GOPHERCLAW_CONTAINER_IMAGE:-%s}"
@@ -182,21 +196,21 @@ RUNTIME="${CONTAINER_RUNTIME:-docker}"
 PROMPT=$(cat "groups/%s/pending_message.txt" 2>/dev/null || true)
 
 # Encode input as JSON; jq handles special characters in PROMPT safely.
-INPUT=$(jq -cn --arg p "$PROMPT" --arg g "%s" \
-  '{Prompt:$p,GroupFolder:$g,IsMain:false}')
+INPUT=$(jq -cn --arg p "$PROMPT" --arg s "%s" --arg g "%s" \
+  '{Prompt:$p,SessionID:$s,GroupFolder:$g,IsMain:false}')
 
 # Ensure the per-group session state directory exists on the host.
 mkdir -p "groups/%s/.claude"
 
-# The container prints output between GOPHERCLAW sentinel markers.
-# ~/.claude/ is mounted so claude --continue resumes across container runs.
+# The container entrypoint outputs SESSION_ID:<id> then the response,
+# all between GOPHERCLAW sentinel markers.
 "$RUNTIME" run --rm -i \
   -v "$(pwd)/groups/%s:/workspace/group:rw" \
   -v "$(pwd)/groups/global:/workspace/global:ro" \
   -v "$(pwd)/groups/%s/.claude:/home/claude/.claude:rw" \
   "$IMAGE" <<< "$INPUT"
 `,
-		"gopherclaw-agent:latest", groupFolder, groupFolder, groupFolder, groupFolder, groupFolder)
+		"gopherclaw-agent:latest", groupFolder, sessionID, groupFolder, groupFolder, groupFolder, groupFolder)
 }
 
 func main() {

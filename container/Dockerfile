@@ -29,13 +29,12 @@ USER claude
 # Install claude CLI via native binary installer
 RUN curl -fsSL https://claude.ai/install.sh | bash
 
-# Create entrypoint script.
-# Reads ContainerInput JSON from stdin, runs claude --print, wraps output in sentinels.
-# --continue resumes the most recent session in ~/.claude/ (mounted from the host's
-# groups/<name>/.claude/ directory); on first run, starts a new session automatically.
-RUN printf '#!/bin/bash\nset -e\nINPUT=$(cat)\nPROMPT=$(printf "%%s" "$INPUT" | jq -r ".Prompt")\ncd /workspace/group\necho "---GOPHERCLAW_OUTPUT_START---"\nclaude --dangerously-skip-permissions --continue --print "$PROMPT" 2>&1\necho "---GOPHERCLAW_OUTPUT_END---"\n' \
-    > /home/claude/entrypoint.sh \
-    && chmod +x /home/claude/entrypoint.sh
+# Copy entrypoint script.
+# Reads ContainerInput JSON from stdin; resumes via --resume <session_id> when
+# a session ID is present, else starts fresh. Outputs the response and the new
+# session ID between GOPHERCLAW sentinel markers.
+COPY --chown=claude:claude entrypoint.sh /home/claude/entrypoint.sh
+RUN chmod +x /home/claude/entrypoint.sh
 
 WORKDIR /workspace/group
 
