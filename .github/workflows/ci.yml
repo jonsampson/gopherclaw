@@ -25,7 +25,7 @@ jobs:
           go-version: ${{ matrix.go }}
           cache: true
 
-      # go-sqlite3 requires CGO; gcc is pre-installed on ubuntu-latest.
+      # modernc.org/sqlite is pure Go (no cgo required).
       - name: Build
         run: go build ./...
 
