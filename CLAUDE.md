@@ -1,12 +1,12 @@
 # gopherclaw
 
-Go reimplementation of [nanoclaw](https://github.com/qwibitai/nanoclaw) — a personal AI assistant platform that connects messaging channels to Claude agents running in isolated containers.
+Go reimplementation of [openclaw](https://github.com/openclaw/openclaw) — a personal AI assistant platform that connects messaging channels to OpenCode agents running in isolated containers.
 
 See [README.md](README.md) for user-facing documentation. See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and the skill-branch model.
 
 ## Quick Context
 
-Single Go binary. Channel adapters (WhatsApp, Telegram, Slack, Discord) are skills that self-register at startup based on present credentials. Messages route through an allowlist and per-group queue to a Claude agent subprocess. Each group has an isolated folder (`groups/<name>/`) and its own `CLAUDE.md` memory file. SQLite persists all state.
+Single Go binary. Channel adapters (WhatsApp, Telegram, Slack, Discord) are skills that self-register at startup based on present credentials. Messages route through an allowlist and per-group queue to an OpenCode agent subprocess. Each group has an isolated folder (`groups/<name>/`) and its own `instructions.md` system prompt. SQLite persists all state.
 
 ## Key Files
 
@@ -20,11 +20,11 @@ Single Go binary. Channel adapters (WhatsApp, Telegram, Slack, Discord) are skil
 | `internal/queue/queue.go` | Per-group serialised queue with global concurrency cap and idle preemption |
 | `internal/scheduler/scheduler.go` | Drift-free next-run computation and `StartSchedulerLoop` |
 | `internal/runner/runner.go` | Spawns agent subprocess, captures output between sentinel markers |
-| `groups/main/CLAUDE.md` | Default main-group agent system prompt (edit this to customise the agent) |
+| `groups/main/instructions.md` | Default main-group agent system prompt (edit this to customise the agent) |
 | `groups/global/` | Shared resources accessible to all groups |
-| `container/Dockerfile` | Agent container image: debian-slim + claude CLI, reads JSON from stdin |
+| `container/Dockerfile` | Agent container image: debian-slim + opencode CLI, reads JSON from stdin |
 | `container/build.sh` | Builds the agent container image |
-| `container/entrypoint.sh` | Container entrypoint: runs claude, emits sentinel-wrapped output with SESSION_ID |
+| `container/entrypoint.sh` | Container entrypoint: runs opencode, emits sentinel-wrapped output with SESSION_ID |
 | `container/skills/` | Container-side skills loaded inside the agent container at runtime |
 | `launchd/com.gopherclaw.plist` | macOS launchd service file (template vars substituted by `/setup`) |
 | `systemd/gopherclaw.service` | Linux systemd user service file (template vars substituted by `/setup`) |
@@ -35,13 +35,13 @@ API keys, secret keys, OAuth tokens, and auth credentials are managed by the One
 
 ## Skills
 
-gopherclaw uses the same skill model as nanoclaw. Skills are the primary extension mechanism — not PRs.
+gopherclaw uses the same skill model as openclaw. Skills are the primary extension mechanism — not PRs.
 
 | Type | Location | How to apply |
 |------|----------|--------------|
 | Feature skill | `skill/*` branch | `git merge skill/<name>` |
-| Utility skill | `.claude/skills/<name>/` | Run the skill directly |
-| Operational skill | `.claude/skills/<name>/` | Instruction-only, always on `main` |
+| Utility skill | `.opencode/skills/<name>/` | Run the skill directly |
+| Operational skill | `.opencode/skills/<name>/` | Instruction-only, always on `main` |
 | Container skill | `container/skills/<name>/` | Loaded inside the agent container |
 
 Common skills:

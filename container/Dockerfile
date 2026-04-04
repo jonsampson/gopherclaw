@@ -1,5 +1,5 @@
 # GopherClaw Agent Container
-# Runs claude CLI in an isolated Linux environment.
+# Runs opencode CLI in an isolated Linux environment.
 # Credentials are injected by the host's OneCLI gateway — never passed here directly.
 
 FROM debian:bookworm-slim
@@ -11,30 +11,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
     jq \
+    nodejs \
+    npm \
     && rm -rf /var/lib/apt/lists/*
 
 # Create dedicated non-root user
-RUN useradd -m -s /bin/bash claude
+RUN useradd -m -s /bin/bash opencode
 
 # Create workspace directories (group-isolated + shared global)
 RUN mkdir -p /workspace/group /workspace/global \
-    && chown -R claude:claude /workspace
-
-# Add claude CLI install location to PATH
-ENV PATH="/home/claude/.claude/local:${PATH}"
+    && chown -R opencode:opencode /workspace
 
 # Switch to non-root user for all subsequent steps
-USER claude
+USER opencode
 
-# Install claude CLI via native binary installer
-RUN curl -fsSL https://claude.ai/install.sh | bash
+# Install opencode CLI (or claude CLI)
+RUN npm install -g opencode
 
 # Copy entrypoint script
-COPY --chown=claude:claude entrypoint.sh /home/claude/entrypoint.sh
-RUN chmod +x /home/claude/entrypoint.sh
+COPY --chown=opencode:opencode entrypoint.sh /home/opencode/entrypoint.sh
+RUN chmod +x /home/opencode/entrypoint.sh
 
 WORKDIR /workspace/group
 
 # Input: ContainerInput JSON on stdin
 # Output: agent response bracketed by GOPHERCLAW_OUTPUT_START / _END markers
-ENTRYPOINT ["/home/claude/entrypoint.sh"]
+ENTRYPOINT ["/home/opencode/entrypoint.sh"]

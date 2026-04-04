@@ -176,9 +176,9 @@ func processGroup(item queue.Item, database *db.DB, sender types.Sender, timeout
 // the session ID and persists it for the next run.
 //
 // Volume mounts:
-//   - groups/<group>/         → /workspace/group  (rw, agent working dir)
-//   - groups/global/          → /workspace/global (ro, shared context)
-//   - groups/<group>/.claude/ → /home/claude/.claude (rw, session state)
+//   - groups/<group>/         → /workspace/group   (rw, agent working dir)
+//   - groups/global/          → /workspace/global  (ro, shared context)
+//   - groups/<group>/.opencode/ → /home/opencode/.opencode (rw, session state)
 //
 // The container image is selected by GOPHERCLAW_CONTAINER_IMAGE (default:
 // gopherclaw-agent:latest). Build it with ./container/build.sh.
@@ -199,14 +199,14 @@ INPUT=$(jq -cn --arg p "$PROMPT" --arg s "%s" --arg g "%s" \
   '{Prompt:$p,SessionID:$s,GroupFolder:$g}')
 
 # Ensure per-group session state directory exists on the host.
-mkdir -p "groups/%s/.claude"
+mkdir -p "groups/%s/.opencode"
 
 # The container entrypoint outputs SESSION_ID:<id> then the response,
 # all between GOPHERCLAW sentinel markers.
 "$RUNTIME" run --rm -i \
   -v "$(pwd)/groups/%s:/workspace/group:rw" \
   -v "$(pwd)/groups/global:/workspace/global:ro" \
-  -v "$(pwd)/groups/%s/.claude:/home/claude/.claude:rw" \
+  -v "$(pwd)/groups/%s/.opencode:/home/opencode/.opencode:rw" \
   "$IMAGE" <<< "$INPUT"
 `,
 		"gopherclaw-agent:latest", groupFolder, sessionID, groupFolder, groupFolder, groupFolder, groupFolder)

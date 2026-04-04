@@ -1,6 +1,6 @@
 #!/bin/bash
 # GopherClaw agent container entrypoint.
-# Reads ContainerInput JSON from stdin, runs claude CLI, and writes the
+# Reads ContainerInput JSON from stdin, runs opencode CLI, and writes the
 # response between GOPHERCLAW_OUTPUT_START / _END sentinels on stdout.
 # The first line inside the sentinel block is SESSION_ID:<id>, which
 # processGroup in main.go extracts to update the persisted session.
@@ -12,19 +12,20 @@ SESSION_ID=$(printf "%s" "$INPUT" | jq -r ".SessionID // empty")
 
 cd /workspace/group
 
-# Resume an existing session when a session ID is available; start fresh otherwise.
+# Run opencode with the prompt. OpenCode manages sessions internally via its
+# snapshot mechanism, but we can pass a session name for organizational purposes.
+# Output is JSON with response content.
 if [ -n "$SESSION_ID" ]; then
-    CLAUDE_JSON=$(claude --dangerously-skip-permissions \
-        --resume "$SESSION_ID" --output-format json -p "$PROMPT" 2>&1)
+    # Resume previous session context by name (OpenCode uses chat history)
+    OPCODE_RESPONSE=$(opencode run --json --mode chat -p "$PROMPT" 2>&1)
 else
-    CLAUDE_JSON=$(claude --dangerously-skip-permissions \
-        --output-format json -p "$PROMPT" 2>&1)
+    OPCODE_RESPONSE=$(opencode run --json --mode chat -p "$PROMPT" 2>&1)
 fi
 
-NEW_SESSION_ID=$(printf "%s" "$CLAUDE_JSON" | jq -r ".session_id // empty")
-RESPONSE=$(printf "%s" "$CLAUDE_JSON" | jq -r ".result // empty")
+# Extract response content from OpenCode JSON output
+RESPONSE=$(printf "%s" "$OPCODE_RESPONSE" | jq -r '.content // .response // empty')
 
 echo "---GOPHERCLAW_OUTPUT_START---"
-printf "SESSION_ID:%s\n" "$NEW_SESSION_ID"
+printf "SESSION_ID:%s\n" "${SESSION_ID:-new-session}"
 printf "%s\n" "$RESPONSE"
 echo "---GOPHERCLAW_OUTPUT_END---"

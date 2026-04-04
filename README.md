@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/jonsampson/gopherclaw/actions/workflows/ci.yml/badge.svg)](https://github.com/jonsampson/gopherclaw/actions/workflows/ci.yml)
 
-**gopherclaw** is a Go reimplementation of [openclaw / nanoclaw](https://github.com/openclaw/openclaw) — a personal AI assistant platform that connects messaging channels (WhatsApp, Telegram, Slack, Discord, and others) to Claude AI agents running on your own hardware.
+**gopherclaw** is a Go reimplementation of [openclaw / nanoclaw](https://github.com/openclaw/openclaw) — a personal AI assistant platform that connects messaging channels (WhatsApp, Telegram, Slack, Discord, and others) to OpenCode AI agents running on your own hardware.
 
 > **Fork-first.** This repository is designed to be forked, not just imported.
 > Clone it, make it yours, and run it. Customisation happens in your fork —
@@ -44,10 +44,10 @@ Messaging channel
   └─────────────────────────────────────────────────────────┘
        │
        ▼
-  Agent script         internal/runner
-  Execute /bin/sh script in the group's folder.
-  The Claude CLI reads groups/<name>/CLAUDE.md as context.
-  Capture output between the structured markers.
+   Agent script         internal/runner
+   Execute /bin/sh script in the group's folder.
+   OpenCode CLI reads instructions from opencode.json config.
+   Capture output between the structured markers.
        │
        ▼
   Response             types.Channel.SendMessage
@@ -74,7 +74,7 @@ enqueuing them as high-priority items.
 | Go 1.20 or later | Tested with Go 1.25 |
 | `gcc` (or a compatible C compiler) | Required by `go-sqlite3` (CGO) |
 | SQLite3 development headers | `libsqlite3-dev` on Debian/Ubuntu; `sqlite-devel` on Fedora/RHEL; included in Xcode CLI tools on macOS |
-| `claude` CLI | Install from [claude.ai/code](https://claude.ai/code) and authenticate with `claude login` |
+| `opencode` CLI | Install with `npm install -g opencode` or see https://opencode.ai/docs/ |
 
 ### Clone and build
 
@@ -86,9 +86,16 @@ go build -o gopherclaw ./cmd/gopherclaw
 
 ### Customise your agent
 
-Edit `groups/main/CLAUDE.md` — this is your agent's system prompt and persistent
+Edit `groups/main/instructions.md` — this is your agent's system prompt and persistent
 memory. Change the name, personality, and instructions to suit your use case.
-The file is picked up automatically when the Claude CLI runs inside that folder.
+OpenCode reads this as part of its `instructions` configuration. Add it to your
+opencode.json:
+
+```json
+{
+  "instructions": ["groups/main/instructions.md"]
+}
+```
 
 ### Run
 
@@ -103,7 +110,7 @@ branch to add a real platform (see [Skills](#skills)).
 
 ---
 
-## Groups and CLAUDE.md
+## Groups and instructions.md
 
 Each registered group has a folder under `groups/`:
 
@@ -120,8 +127,8 @@ groups/
     …
 ```
 
-**`CLAUDE.md`** is the single file that defines how your agent behaves in that
-group. Edit it in plain Markdown — the Claude CLI reads it every time it runs.
+**`instructions.md`** is the single file that defines how your agent behaves in that
+group. Edit it in plain Markdown — OpenCode reads it via the `instructions` config option.
 It can contain:
 
 - Personality and tone instructions
@@ -225,11 +232,11 @@ claude --print "$(cat pending_message.txt)" 2>&1
 echo '---GOPHERCLAW_OUTPUT_END---'
 ```
 
-Everything printed outside the markers is ignored. Running the Claude CLI
-inside `groups/<name>/` causes it to pick up `CLAUDE.md` automatically.
+Everything printed outside the markers is ignored. Running the OpenCode CLI
+inside the container causes it to pick up the configured instructions via opencode.json.
 
 The placeholder `buildScript` in `cmd/gopherclaw/main.go` shows where to put
-this invocation — replace it with the appropriate `claude` command for your
+this invocation — replace it with the appropriate `opencode` command for your
 setup.
 
 ---
@@ -237,7 +244,7 @@ setup.
 ## Scheduled tasks
 
 Tasks are rows in the `scheduled_tasks` table, managed via SQL or the agent
-itself (the main group CLAUDE.md includes instructions for this).
+itself (the main group instructions.md includes instructions for this).
 
 | `schedule_type` | `schedule_value` | Behaviour |
 |---|---|---|
@@ -251,8 +258,8 @@ Scheduled tasks are enqueued as high-priority items and preempt queued messages.
 
 ## MCP tools
 
-Agents run inside Docker containers with `groups/<name>/.claude/` mounted at
-`/home/claude/.claude/`. This directory persists across runs (the container is
+Agents run inside Docker containers with `groups/<name>/.opencode/` mounted at
+`/home/opencode/.opencode/`. This directory persists across runs (the container is
 `--rm` but the host directory is not), so any MCP server configuration written
 there survives between invocations.
 
@@ -260,25 +267,37 @@ there survives between invocations.
 
 gopherclaw does **not** act as an MCP server or broker MCP calls on behalf of
 agents. Each agent configures and launches its own MCP servers directly, the
-same way any Claude Code session would. This keeps gopherclaw's role narrow
+same way any OpenCode session would. This keeps gopherclaw's role narrow
 (routing and scheduling) and lets each group's agent have a different set of
 tools without any changes to gopherclaw itself.
 
 ### Configuring MCP servers
 
-MCP servers are registered in `~/.claude/settings.json` (inside the container,
-which maps to `groups/<name>/.claude/settings.json` on the host). Use
-`claude mcp add` or edit the file directly.
+MCP servers are registered in `~/.config/opencode/opencode.json` (inside the container,
+which maps to `groups/<name>/.opencode/opencode.json` on the host). Use the `mcp` option
+in your config or edit the file directly.
+
+Example opencode.json for a group:
+
+```json
+{
+  "mcp": {
+    "my-tool": {
+      "type": "stdio",
+      "command": "/path/to/mcp-server"
+    }
+  }
+}
+```
 
 The simplest way to pre-configure MCP for all runs of a group is to create the
 settings file once on the host:
 
 ```sh
 # On the host, before the first agent run for that group:
-mkdir -p groups/my-group/.claude
-claude mcp add --scope local my-tool -- /path/to/mcp-server
-# The resulting settings.json is now at groups/my-group/.claude/settings.json
-# and will be present inside the container on every run.
+mkdir -p groups/my-group/.opencode
+# Edit groups/my-group/.opencode/opencode.json with your MCP config
+# This file will be mounted into the container on every run.
 ```
 
 Alternatively, add a container skill that writes the configuration at container
@@ -290,12 +309,11 @@ Because containers run with `--rm` and no network policy beyond the default
 Docker bridge, MCP servers that call external APIs must either:
 
 - Run on the **host** and be reachable from inside the container via the Docker
-  host gateway (`host-gateway` extra host or `host.docker.internal`), or
+  host gateway (`--add-host=host.docker.internal:host-gateway` or `host.docker.internal`), or
 - Be bundled **inside the container image** as part of a container skill.
 
-Secrets (API keys) for MCP servers follow the same rule as all other secrets:
-managed by the OneCLI gateway, injected at request time. See
-[Secrets / Credentials / OneCLI](#secrets--credentials--onecli).
+Secrets (API keys) follow the same rule as all other secrets:
+managed by environment variables or config file variables.
 
 ---
 
@@ -361,7 +379,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. The short version:
 
 Core PRs are accepted for bug fixes and improvements that benefit all users.
 New channels, agent capabilities, and opinionated behaviour belong in skill
-branches. This keeps the base code small enough for Claude to safely modify
+branches. This keeps the base code small enough for any AI to safely modify
 in any user's fork.
 
 ---
