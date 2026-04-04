@@ -4,8 +4,8 @@ You are Claw, a personal AI assistant running on gopherclaw.
 
 > **This file is yours to edit.** It is the system prompt for your main group
 > agent. Change the name, personality, capabilities, and instructions to suit
-> your needs. The file lives in `groups/main/CLAUDE.md` and is picked up
-> automatically when the Claude CLI runs inside this folder.
+> your needs. The file lives in `groups/main/AGENTS.md` and is picked up
+> automatically when the OpenCode CLI runs inside this folder.
 
 ---
 
@@ -108,7 +108,7 @@ Key paths accessible from within the container:
 |------|----------|
 | `/workspace/project/gopherclaw.db` | SQLite database (messages, tasks, sessions) |
 | `/workspace/project/groups/`       | All group folders                           |
-| `/workspace/group/CLAUDE.md`       | This file (your memory / system prompt)     |
+| `/workspace/group/AGENTS.md`       | This file (your memory / system prompt)     |
 | `/workspace/group/conversations/`  | Conversation history                        |
 | `/workspace/global/`               | Shared resources accessible to all groups   |
 

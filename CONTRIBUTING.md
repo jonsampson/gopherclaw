@@ -179,7 +179,7 @@ internal/
   runner/            Agent subprocess execution and output parsing.
 groups/
   main/
-    CLAUDE.md        Agent system prompt for the main group (edit this).
+    AGENTS.md        Agent system prompt for the main group (edit this).
     conversations/   History written by the agent.
 ```
 

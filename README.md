@@ -86,14 +86,13 @@ go build -o gopherclaw ./cmd/gopherclaw
 
 ### Customise your agent
 
-Edit `groups/main/instructions.md` — this is your agent's system prompt and persistent
+Edit `groups/main/AGENTS.md` — this is your agent's system prompt and persistent
 memory. Change the name, personality, and instructions to suit your use case.
-OpenCode reads this as part of its `instructions` configuration. Add it to your
-opencode.json:
+OpenCode reads this as part of its `instructions` configuration:
 
 ```json
 {
-  "instructions": ["groups/main/instructions.md"]
+  "instructions": ["groups/main/AGENTS.md"]
 }
 ```
 
@@ -110,24 +109,24 @@ branch to add a real platform (see [Skills](#skills)).
 
 ---
 
-## Groups and instructions.md
+## Groups and AGENTS.md
 
 Each registered group has a folder under `groups/`:
 
 ```
 groups/
   main/
-    CLAUDE.md          ← agent system prompt + memory (edit this)
+    AGENTS.md          ← agent system prompt + memory (edit this)
     conversations/     ← searchable history written by the agent
   whatsapp_family/
-    CLAUDE.md
+    AGENTS.md
     conversations/
   slack_work/
-    CLAUDE.md
+    AGENTS.md
     …
 ```
 
-**`instructions.md`** is the single file that defines how your agent behaves in that
+**`AGENTS.md`** is the single file that defines how your agent behaves in that
 group. Edit it in plain Markdown — OpenCode reads it via the `instructions` config option.
 It can contain:
 
@@ -244,7 +243,7 @@ setup.
 ## Scheduled tasks
 
 Tasks are rows in the `scheduled_tasks` table, managed via SQL or the agent
-itself (the main group instructions.md includes instructions for this).
+itself (the main group AGENTS.md includes instructions for this).
 
 | `schedule_type` | `schedule_value` | Behaviour |
 |---|---|---|
