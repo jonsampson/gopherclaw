@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -9,6 +10,9 @@ import (
 
 	"github.com/jonsampson/gopherclaw/internal/types"
 )
+
+// ctx is the default background context for database operations.
+var ctx = context.Background()
 
 // DB wraps a SQLite connection with gopherclaw-specific operations.
 type DB struct {
@@ -84,11 +88,11 @@ func open(dataSource string) (*DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := conn.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
-	if _, err := conn.Exec(schema); err != nil {
+	if _, err := conn.ExecContext(ctx, schema); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
@@ -115,7 +119,7 @@ func (d *DB) StoreMessage(msg types.NewMessage) error {
 	if msg.Content == "" {
 		return nil
 	}
-	_, err := d.conn.Exec(`
+	_, err := d.conn.ExecContext(ctx, `
 		INSERT INTO messages (id, chat_jid, sender, content, timestamp, is_from_me)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id, chat_jid) DO UPDATE SET
@@ -137,7 +141,7 @@ func (d *DB) GetMessagesSince(chatJID string, sinceTimestamp int64, lastBotMsgID
 	// Cursor recovery: if no explicit cursor, use the last bot reply timestamp.
 	if since == 0 && lastBotMsgID != "" {
 		var botTS int64
-		err := d.conn.QueryRow(
+		err := d.conn.QueryRowContext(ctx,
 			`SELECT timestamp FROM messages WHERE id=? AND chat_jid=? AND is_from_me=1`,
 			lastBotMsgID, chatJID,
 		).Scan(&botTS)
@@ -146,7 +150,7 @@ func (d *DB) GetMessagesSince(chatJID string, sinceTimestamp int64, lastBotMsgID
 		}
 	}
 
-	rows, err := d.conn.Query(`
+	rows, err := d.conn.QueryContext(ctx, `
 		SELECT id, chat_jid, sender, content, timestamp, is_from_me
 		FROM (
 			SELECT id, chat_jid, sender, content, timestamp, is_from_me
@@ -194,10 +198,11 @@ func scanMessages(rows *sql.Rows) ([]types.NewMessage, error) {
 // StoreChatMetadata records chat info. Name defaults to JID if empty.
 // The timestamp is preserved if the stored value is newer.
 func (d *DB) StoreChatMetadata(jid, name string, isGroup bool, lastActivity int64) error {
+	ctx := context.Background()
 	if name == "" {
 		name = jid
 	}
-	_, err := d.conn.Exec(`
+	_, err := d.conn.ExecContext(ctx, `
 		INSERT INTO chats (jid, name, last_activity, is_group)
 		VALUES (?, ?, ?, ?)
 		ON CONFLICT(jid) DO UPDATE SET
@@ -210,7 +215,7 @@ func (d *DB) StoreChatMetadata(jid, name string, isGroup bool, lastActivity int6
 
 // GetAllChats returns all known chats.
 func (d *DB) GetAllChats() ([]types.ChatInfo, error) {
-	rows, err := d.conn.Query(
+	rows, err := d.conn.QueryContext(ctx,
 		`SELECT jid, name, last_activity, is_group FROM chats ORDER BY last_activity DESC`,
 	)
 	if err != nil {
@@ -232,7 +237,8 @@ func (d *DB) GetAllChats() ([]types.ChatInfo, error) {
 
 // CreateTask inserts a new scheduled task and returns its ID.
 func (d *DB) CreateTask(task types.ScheduledTask) (int64, error) {
-	res, err := d.conn.Exec(`
+	ctx := context.Background()
+	res, err := d.conn.ExecContext(ctx, `
 		INSERT INTO scheduled_tasks (group_folder, prompt, schedule_type, schedule_value, status, next_run)
 		VALUES (?, ?, ?, ?, ?, ?)
 	`, task.GroupFolder, task.Prompt, task.ScheduleType, task.ScheduleValue, task.Status, task.NextRun)
@@ -244,7 +250,7 @@ func (d *DB) CreateTask(task types.ScheduledTask) (int64, error) {
 
 // GetTaskByID retrieves a task by its primary key.
 func (d *DB) GetTaskByID(id int64) (*types.ScheduledTask, error) {
-	row := d.conn.QueryRow(`
+	row := d.conn.QueryRowContext(ctx, `
 		SELECT id, group_folder, prompt, schedule_type, schedule_value, status, next_run
 		FROM scheduled_tasks WHERE id=?
 	`, id)
@@ -257,7 +263,7 @@ func (d *DB) GetTaskByID(id int64) (*types.ScheduledTask, error) {
 
 // GetAllTasks returns every scheduled task.
 func (d *DB) GetAllTasks() ([]types.ScheduledTask, error) {
-	rows, err := d.conn.Query(`
+	rows, err := d.conn.QueryContext(ctx, `
 		SELECT id, group_folder, prompt, schedule_type, schedule_value, status, next_run
 		FROM scheduled_tasks
 	`)
@@ -270,7 +276,8 @@ func (d *DB) GetAllTasks() ([]types.ScheduledTask, error) {
 
 // GetDueTasks returns active tasks whose next_run <= now (unix seconds).
 func (d *DB) GetDueTasks(now int64) ([]types.ScheduledTask, error) {
-	rows, err := d.conn.Query(`
+	ctx := context.Background()
+	rows, err := d.conn.QueryContext(ctx, `
 		SELECT id, group_folder, prompt, schedule_type, schedule_value, status, next_run
 		FROM scheduled_tasks
 		WHERE status='active' AND next_run<=?
@@ -284,7 +291,8 @@ func (d *DB) GetDueTasks(now int64) ([]types.ScheduledTask, error) {
 
 // UpdateTask replaces the mutable fields of an existing task.
 func (d *DB) UpdateTask(task types.ScheduledTask) error {
-	_, err := d.conn.Exec(`
+	ctx := context.Background()
+	_, err := d.conn.ExecContext(ctx, `
 		UPDATE scheduled_tasks
 		SET group_folder=?, prompt=?, schedule_type=?, schedule_value=?, status=?, next_run=?
 		WHERE id=?
@@ -294,13 +302,15 @@ func (d *DB) UpdateTask(task types.ScheduledTask) error {
 
 // DeleteTask removes a task and its run logs.
 func (d *DB) DeleteTask(id int64) error {
-	_, err := d.conn.Exec(`DELETE FROM scheduled_tasks WHERE id=?`, id)
+	ctx := context.Background()
+	_, err := d.conn.ExecContext(ctx, `DELETE FROM scheduled_tasks WHERE id=?`, id)
 	return err
 }
 
 // LogTaskRun records an execution result.
 func (d *DB) LogTaskRun(log types.TaskRunLog) error {
-	_, err := d.conn.Exec(`
+	ctx := context.Background()
+	_, err := d.conn.ExecContext(ctx, `
 		INSERT INTO task_run_logs (task_id, ran_at, status, output) VALUES (?, ?, ?, ?)
 	`, log.TaskID, log.RanAt, log.Status, log.Output)
 	return err
@@ -308,8 +318,9 @@ func (d *DB) LogTaskRun(log types.TaskRunLog) error {
 
 // GetRouterState retrieves a persisted key-value pair.
 func (d *DB) GetRouterState(key string) (string, error) {
+	ctx := context.Background()
 	var value string
-	err := d.conn.QueryRow(`SELECT value FROM router_state WHERE key=?`, key).Scan(&value)
+	err := d.conn.QueryRowContext(ctx, `SELECT value FROM router_state WHERE key=?`, key).Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -318,7 +329,8 @@ func (d *DB) GetRouterState(key string) (string, error) {
 
 // SetRouterState persists a key-value pair.
 func (d *DB) SetRouterState(key, value string) error {
-	_, err := d.conn.Exec(`
+	ctx := context.Background()
+	_, err := d.conn.ExecContext(ctx, `
 		INSERT INTO router_state (key, value) VALUES (?, ?)
 		ON CONFLICT(key) DO UPDATE SET value=excluded.value
 	`, key, value)
@@ -327,8 +339,9 @@ func (d *DB) SetRouterState(key, value string) error {
 
 // GetSession returns the Claude session ID for a group folder.
 func (d *DB) GetSession(groupFolder string) (string, error) {
+	ctx := context.Background()
 	var sid string
-	err := d.conn.QueryRow(`SELECT session_id FROM sessions WHERE group_folder=?`, groupFolder).Scan(&sid)
+	err := d.conn.QueryRowContext(ctx, `SELECT session_id FROM sessions WHERE group_folder=?`, groupFolder).Scan(&sid)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -337,7 +350,8 @@ func (d *DB) GetSession(groupFolder string) (string, error) {
 
 // SetSession persists the Claude session ID for a group folder.
 func (d *DB) SetSession(groupFolder, sessionID string) error {
-	_, err := d.conn.Exec(`
+	ctx := context.Background()
+	_, err := d.conn.ExecContext(ctx, `
 		INSERT INTO sessions (group_folder, session_id) VALUES (?, ?)
 		ON CONFLICT(group_folder) DO UPDATE SET session_id=excluded.session_id
 	`, groupFolder, sessionID)
@@ -346,9 +360,10 @@ func (d *DB) SetSession(groupFolder, sessionID string) error {
 
 // GetRegisteredGroup returns the group config for a JID.
 func (d *DB) GetRegisteredGroup(jid string) (*types.RegisteredGroup, error) {
+	ctx := context.Background()
 	var g types.RegisteredGroup
 	var isMain int
-	err := d.conn.QueryRow(`
+	err := d.conn.QueryRowContext(ctx, `
 		SELECT jid, name, folder, trigger, is_main FROM registered_groups WHERE jid=?
 	`, jid).Scan(&g.JID, &g.Name, &g.Folder, &g.Trigger, &isMain)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -363,7 +378,8 @@ func (d *DB) GetRegisteredGroup(jid string) (*types.RegisteredGroup, error) {
 
 // SetRegisteredGroup stores or replaces the group config for a JID.
 func (d *DB) SetRegisteredGroup(jid string, g types.RegisteredGroup) error {
-	_, err := d.conn.Exec(`
+	ctx := context.Background()
+	_, err := d.conn.ExecContext(ctx, `
 		INSERT INTO registered_groups (jid, name, folder, trigger, is_main)
 		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(jid) DO UPDATE SET
@@ -377,7 +393,8 @@ func (d *DB) SetRegisteredGroup(jid string, g types.RegisteredGroup) error {
 
 // GetAllRegisteredGroups returns all registered groups.
 func (d *DB) GetAllRegisteredGroups() ([]types.RegisteredGroup, error) {
-	rows, err := d.conn.Query(`
+	ctx := context.Background()
+	rows, err := d.conn.QueryContext(ctx, `
 		SELECT jid, name, folder, trigger, is_main FROM registered_groups
 	`)
 	if err != nil {

@@ -1,25 +1,36 @@
+version: "2"
 linters:
   enable:
-    - errcheck       # unchecked errors
-    - govet          # go vet passes
-    - staticcheck    # broad static analysis (replaces deprecated gosimple, etc.)
-    - ineffassign    # assignments whose value is never used
-    - unused         # unused code
-    - misspell       # spelling mistakes in comments / strings
-    - gofmt          # formatting (fail on unformatted code)
-    - godot          # doc comments must end with a period
-    - noctx          # HTTP requests made without a context
-    - bodyclose      # http response bodies must be closed
-    - copyloopvar    # loop-variable capture bugs
-
-linters-settings:
-  godot:
-    scope: toplevel   # only require periods on exported top-level doc comments
-
-issues:
-  exclude-rules:
-    # Test files have relaxed doc-comment rules.
-    - path: "_test\\.go"
-      linters:
-        - godot
-        - errcheck
+    - bodyclose
+    - copyloopvar
+    - godot
+    - misspell
+    - noctx
+  settings:
+    godot:
+      scope: toplevel
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - errcheck
+          - godot
+        path: _test\.go
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

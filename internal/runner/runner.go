@@ -9,6 +9,7 @@ package runner
 
 import (
 	"bufio"
+	"context"
 	"os/exec"
 	"strings"
 	"time"
@@ -38,7 +39,9 @@ type OnOutput func(output string)
 // The returned ContainerOutput.Result is non-nil on success and points to the
 // captured text.
 func RunContainerAgent(input types.ContainerInput, onOutput OnOutput, timeout time.Duration) types.ContainerOutput {
-	cmd := exec.Command("/bin/sh", "-c", input.Script)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", input.Script)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -84,30 +87,27 @@ func RunContainerAgent(input types.ContainerInput, onOutput OnOutput, timeout ti
 		resultCh <- scanResult{output: buf.String(), found: found}
 	}()
 
-	// Wait for the process to finish or for the timeout to fire.
+	// Wait for the process to finish.
 	doneCh := make(chan error, 1)
 	go func() { doneCh <- cmd.Wait() }()
 
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-	select {
-	case <-doneCh:
-		res := <-resultCh
-		if res.found {
-			return successResult(input.SessionID, res.output, onOutput)
-		}
-		return errResult(input.SessionID, "process exited with no output")
-
-	case <-timer.C:
-		// Kill the subprocess so the scanner goroutine can drain and return.
-		_ = cmd.Process.Kill()
+	err = <-doneCh
+	if ctx.Err() == context.DeadlineExceeded {
+		// Timeout case.
 		res := <-resultCh
 		if res.found {
 			return successResult(input.SessionID, res.output, onOutput)
 		}
 		return errResult(input.SessionID, "container timed out with no output")
 	}
+	if err != nil {
+		return errResult(input.SessionID, "process failed: "+err.Error())
+	}
+	res := <-resultCh
+	if res.found {
+		return successResult(input.SessionID, res.output, onOutput)
+	}
+	return errResult(input.SessionID, "process exited with no output")
 }
 
 func successResult(sessionID, output string, onOutput OnOutput) types.ContainerOutput {
